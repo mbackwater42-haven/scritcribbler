@@ -1,0 +1,205 @@
+.scrit-cribbler-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.scrit-cribbler-dialog fieldset {
+  border: 1px solid var(--color-border-light);
+  border-radius: 4px;
+  padding: 1rem;
+}
+
+.scrit-cribbler-dialog legend {
+  font-weight: bold;
+  font-size: 1.1em;
+}
+
+.form-group {
+  margin-bottom: 1rem;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+}
+
+.form-group input {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid var(--color-border-light);
+  border-radius: 4px;
+  font-family: inherit;
+}
+
+.recording-controls {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+}
+
+.recording-indicator {
+  flex: 1;
+  min-width: 150px;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: #c41e3a;
+  font-weight: bold;
+  font-size: 1.1em;
+}
+
+.recording-saved {
+  flex: 1;
+  min-width: 150px;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: #2d5d2d;
+  font-weight: bold;
+  font-size: 1em;
+}
+
+.recording-saved i {
+  color: #2d5d2d;
+}
+
+.blink {
+  animation: blink 1s infinite;
+}
+
+@keyframes blink {
+  50% { opacity: 0.5; }
+}
+
+.recording-time {
+  font-family: monospace;
+  font-size: 1.3em;
+  font-weight: bold;
+}
+
+.btn {
+  padding: 0.6rem 1.2rem;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: inherit;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.btn:active {
+  transform: translateY(0);
+}
+
+.btn-success {
+  background-color: #2d5d2d;
+  color: white;
+}
+
+.btn-success:hover {
+  background-color: #3d7d3d;
+}
+
+.btn-primary {
+  background-color: #0066cc;
+  color: white;
+}
+
+.btn-primary:hover {
+  background-color: #0052a3;
+}
+
+.scrit-cribbler-results {
+  padding: 1rem;
+  background-color: var(--color-bg-alt);
+  border-radius: 4px;
+  border-left: 4px solid #0066cc;
+}
+
+.scrit-cribbler-results h3 {
+  margin-top: 0;
+  color: #0066cc;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.scrit-cribbler-results h4 {
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.scrit-cribbler-results details {
+  margin-top: 1rem;
+  padding: 0.5rem;
+  background-color: var(--color-bg);
+  border-radius: 4px;
+}
+
+.scrit-cribbler-results summary {
+  cursor: pointer;
+  font-weight: bold;
+  color: var(--color-text-dark);
+  padding: 0.5rem;
+  user-select: none;
+}
+
+.scrit-cribbler-results summary:hover {
+  background-color: var(--color-bg-alt);
+}
+
+.scrit-cribbler-results pre {
+  background-color: var(--color-bg);
+  padding: 0.75rem;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-size: 0.85em;
+  margin: 0.5rem 0 0 0;
+  line-height: 1.4;
+}
+
+.hint {
+  font-size: 0.9em;
+  color: var(--color-text-dark);
+  opacity: 0.7;
+  margin-top: 1rem;
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.hint i {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.hint-secondary {
+  font-size: 0.85em;
+  color: var(--color-text-dark);
+  opacity: 0.6;
+  margin-top: 0.5rem;
+}
+
+/* Dark theme support */
+@media (prefers-color-scheme: dark) {
+  .recording-saved {
+    color: #4fb85c;
+  }
+
+  .recording-saved i {
+    color: #4fb85c;
+  }
+}

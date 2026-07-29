@@ -1,0 +1,43 @@
+<fieldset>
+  <legend>Game Session Recording</legend>
+
+  <div class="form-group">
+    <label for="session-name">Session Name (optional):</label>
+    <input type="text" id="session-name" name="session-name"
+           placeholder="e.g., Campaign Arc 3, Session 12" />
+  </div>
+
+  <div class="recording-controls">
+    {{#if isRecording}}
+      <!-- RECORDING STATE -->
+      <div class="recording-indicator">
+        <span class="blink">●</span> Recording...
+        <span class="recording-time">{{recordingTime}}</span>
+      </div>
+      <button type="button" data-action="stop-recording" class="btn btn-primary">
+        <i class="fas fa-stop"></i> Stop Recording
+      </button>
+
+    {{else if hasSavedRecording}}
+      <!-- SAVED STATE: Ready to process -->
+      <div class="recording-saved">
+        <i class="fas fa-check-circle"></i> Recording saved (ready to process)
+      </div>
+      <button type="button" data-action="process-recording" class="btn btn-primary">
+        <i class="fas fa-cogs"></i> Process & Summarize
+      </button>
+      <p class="hint-secondary">Processing may take 10+ minutes depending on recording length.</p>
+
+    {{else}}
+      <!-- IDLE STATE: Ready to record -->
+      <button type="button" data-action="start-recording" class="btn btn-success">
+        <i class="fas fa-microphone"></i> Start Recording
+      </button>
+    {{/if}}
+  </div>
+</fieldset>
+
+<p class="hint">
+  <i class="fas fa-info-circle"></i>
+  Audio saved locally in .webm format (compressed). Backend processes on-demand after session ends.
+</p>

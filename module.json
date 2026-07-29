@@ -1,0 +1,39 @@
+{
+  "id": "scrit-cribbler",
+  "title": "Scrit Cribbler",
+  "description": "Record game sessions and generate AI summaries locally. Requires the Scrit Cribbler backend service running on your network.",
+  "authors": [
+    {
+      "name": "mbackwater42"
+    }
+  ],
+  "version": "1.0.0",
+  "compatibility": {
+    "minimum": "13",
+    "verified": "14"
+  },
+  "relationships": {
+    "systems": [
+      {
+        "id": "dnd5e",
+        "type": "system"
+      }
+    ]
+  },
+  "esmodules": [
+    "scripts/scrit-cribbler.mjs"
+  ],
+  "styles": [
+    "styles/scrit-cribbler.css"
+  ],
+  "languages": [
+    {
+      "lang": "en",
+      "name": "English",
+      "path": "lang/en.json"
+    }
+  ],
+  "url": "https://github.com/mbackwater42-haven/scritcribbler",
+  "manifest": "https://raw.githubusercontent.com/mbackwater42-haven/scritcribbler/main/module.json",
+  "download": "https://github.com/mbackwater42-haven/scritcribbler/archive/refs/heads/main.zip"
+}
