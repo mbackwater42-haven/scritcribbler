@@ -144,12 +144,17 @@ export class RecordingDialog extends HandlebarsApplicationMixin(ApplicationV2) {
 
     const sessionNameInput = this.element.querySelector("[name='session-name']");
     const sessionName = sessionNameInput?.value || "Game Session";
+    const audioBlob = this.recordingBlob;
 
-    ui.notifications.info("Processing recording... (this may take 10+ minutes for long sessions)");
+    ui.notifications.info("Processing recording in the background... (may take 10+ minutes for long sessions). You'll get a chat message when it's done.");
+
+    // Close immediately - this is a long background job, no reason to make the
+    // GM sit and watch the dialog. Everything from here on runs detached.
+    this.close();
 
     try {
       const formData = new FormData();
-      formData.append("audio", this.recordingBlob, "session.webm");
+      formData.append("audio", audioBlob, "session.webm");
       formData.append("session_name", sessionName);
 
       const backendUrl = game.settings.get(MODULE_NAME, "backend-url");
@@ -172,7 +177,6 @@ export class RecordingDialog extends HandlebarsApplicationMixin(ApplicationV2) {
       await this.displayResults(result);
 
       ui.notifications.info("Transcription complete! Summary added to Session Recaps.");
-      this.close();
     } catch (e) {
       console.error("Scrit Cribbler | Process error:", e);
       ui.notifications.error(`Processing failed: ${e.message}`);
@@ -190,7 +194,7 @@ export class RecordingDialog extends HandlebarsApplicationMixin(ApplicationV2) {
         <p>${result.summary.split("\n").join("<br />")}</p>
         <details>
           <summary>Full Transcript (${result.transcript.length} chars)</summary>
-          <pre style="max-height: 400px; overflow-y: auto;">${result.transcript}</pre>
+          <div style="max-height: 400px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: break-word; font-size: 0.9em;">${result.transcript}</div>
         </details>
         <p style="font-size: 0.9em; color: #999; margin-top: 1rem;">Summary saved to "Session Recaps" journal entry.</p>
       </div>
@@ -233,7 +237,7 @@ export class RecordingDialog extends HandlebarsApplicationMixin(ApplicationV2) {
             <p>${result.summary.split("\n").join("<br /><br />")}</p>
             <details>
               <summary>Full Transcript</summary>
-              <pre style="background: var(--color-bg); padding: 1rem; border-radius: 4px; max-height: 500px; overflow-y: auto;">${result.transcript}</pre>
+              <div style="background: var(--color-bg); padding: 1rem; border-radius: 4px; max-height: 500px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: break-word;">${result.transcript}</div>
             </details>
           `
         }
