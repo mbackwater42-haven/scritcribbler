@@ -230,7 +230,6 @@ export class RecordingDialog extends HandlebarsApplicationMixin(ApplicationV2) {
         type: "text",
         text: {
           content: `
-            <h2>${pageTitle}</h2>
             <p><strong>Date:</strong> ${pageDate.toLocaleString()} | <strong>Duration:</strong> ${durationMin} minutes</p>
             <hr />
             <h3>Summary</h3>
