@@ -119,8 +119,15 @@ export class RecordingDialog extends HandlebarsApplicationMixin(ApplicationV2) {
     ui.notifications.info(`Recording complete (${Math.round(duration / 60)} min). Saving local copy...`);
 
     try {
-      // Ensure recordings folder exists (createDirectory throws if it already exists - safe to ignore)
-      await FilePicker.createDirectory("data", RECORDINGS_FOLDER).catch(() => null);
+      // createDirectory uses fs.mkdirSync without recursive:true, so nested
+      // paths must be created one level at a time (each throws harmlessly
+      // if that level already exists).
+      const parts = RECORDINGS_FOLDER.split("/");
+      let pathSoFar = "";
+      for (const part of parts) {
+        pathSoFar = pathSoFar ? `${pathSoFar}/${part}` : part;
+        await FilePicker.createDirectory("data", pathSoFar).catch(() => null);
+      }
 
       const file = new File([this.recordingBlob], filename, { type: "audio/webm" });
       await FilePicker.upload("data", RECORDINGS_FOLDER, file, {}, { notify: false });
