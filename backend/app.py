@@ -14,7 +14,7 @@ transcript for summarizing.
                           -> { status, segments: [{start, end, text}], dropped, model }
   POST /chunk-notes       auth  JSON: { session_name, vocab?, chunk: {index, start, transcript} }
                           -> { status, notes }   (called during the session, once per chunk)
-  POST /summarize         auth  JSON: { session_name, duration_seconds, speakers, vocab?,
+  POST /summarize         auth  JSON: { session_name, duration_seconds, speakers, vocab?, previous_recap?,
                                         chunks: [{index, start, transcript, notes?}] }
                           -> { status, summary (markdown) | "NO_STORY", model }
 """
@@ -171,6 +171,16 @@ def to_original(t, spans):
     return orig_start + length, len(spans) - 1
 
 
+def level_db(audio, start, end):
+    """Loudness of a line on this track (dBFS). The recorder uses it to tell a speaker's own
+    mic from their voice bleeding into another player's mic."""
+    span = audio[int(start * SAMPLE_RATE):int(end * SAMPLE_RATE)]
+    if len(span) == 0:
+        return -99.0
+    rms = float(np.sqrt(np.mean(span.astype(np.float64) ** 2)))
+    return round(20 * np.log10(max(rms, 1e-6)), 1)
+
+
 def parse_vocab(raw):
     """Newline/comma separated names -> de-duplicated list, capped to the hotword budget."""
     out, seen, size = [], set(), 0
@@ -256,7 +266,8 @@ def transcribe_chunk():
                 elif NON_LATIN.search(text):
                     dropped["script"] += 1
                 else:
-                    segments.append({"start": round(g["start"], 2), "end": round(g["end"], 2), "text": text})
+                    segments.append({"start": round(g["start"], 2), "end": round(g["end"], 2), "text": text,
+                                     "level": level_db(audio, g["start"], g["end"])})
 
         segments.sort(key=lambda x: x["start"])
         logger.info(f"  {speaker}: kept {len(segments)}, dropped {dropped}")
@@ -374,6 +385,18 @@ def is_no_story(notes_text):
     return all("no story events" in l.lower() for l in lines)
 
 
+def previously(text):
+    """Last session's recap as background: spellings and open threads, not events of this session."""
+    if not text:
+        return ""
+    return f"""
+Background, the recap of the PREVIOUS session (for name spellings and continuing open threads only; do NOT retell it and do NOT present anything from it as happening in this session):
+<<<
+{text.strip()[:3000]}
+>>>
+"""
+
+
 def final_recap(meta, notes, vocab):
     # The world/campaign title is deliberately NOT given to the model: a title like
     # "Cursed Dragon of Phandelver" made Mistral fill the recap with the published
@@ -385,6 +408,7 @@ def final_recap(meta, notes, vocab):
 Length: {minutes} minutes
 Speakers: {speakers}
 
+{previously(meta.get("previous_recap"))}
 {GROUNDING}{vocab_rule(vocab)}
 - Every name, place, creature and item you mention MUST appear in the notes below. Do not use anything you know about published adventures or settings.
 - Leave out dice and game-mechanic numbers: attack rolls, damage, hit points, armor class, ability checks, saving throws. Describe what happened instead ("landed a critical hit", "the enemy fell"). Amounts of gold or items gained are fine.
@@ -408,7 +432,7 @@ One or two short paragraphs telling what happened, in past tense, third person, 
 - Items, money, experience or favors gained or lost.
 
 ## Open Threads
-- Unresolved questions, promises, and where the party stopped."""
+- Unresolved questions, promises, and where the party stopped. An open thread from the previous session may be repeated only if it is still unresolved in these notes."""
     return ollama(prompt, 1600)
 
 

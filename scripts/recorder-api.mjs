@@ -187,6 +187,24 @@ function recapPages(result) {
   }
 }
 
+/** GM-only processing report: what was sent, how long it took, what the filters removed. */
+function reportHtml(report) {
+  if (!report) return "";
+  const secs = (n) => (n == null ? "–" : n >= 90 ? `${Math.round(n / 60)} min` : `${n} s`);
+  const rows = report.chunks.map((c) => {
+    const dropped = Object.entries(c.dropped || {}).filter(([, n]) => n).map(([k, n]) => `${esc(k)} ${n}`).join(", ") || "none";
+    const cross = (c.crosstalk || []).map((x) =>
+      `<li><em>${esc(x.t)}</em> removed from ${esc(x.removedFrom)} (kept for ${esc(x.keptFor)}): “${esc(x.text)}”</li>`).join("");
+    return `<tr><td>${c.index}</td><td>${esc(c.status)}</td><td>${c.speakers ?? "–"}</td><td>${secs(c.transcribeSec)}</td><td>${secs(c.notesSec)}</td><td>${dropped}</td><td>${(c.crosstalk || []).length}</td></tr>`
+      + (cross ? `<tr><td></td><td colspan="6"><ul>${cross}</ul></td></tr>` : "");
+  }).join("");
+  return `<h2>Processing report</h2>
+<p><strong>Models:</strong> Whisper ${esc(report.models?.whisper ?? "?")}, summary ${esc(report.models?.ollama ?? "?")} · <strong>Stop → recap:</strong> ${secs(report.stopToRecapSec)} (summary ${secs(report.summarizeSec)}) · <strong>Status:</strong> ${esc(report.recapStatus ?? "?")}</p>
+<p><strong>Previous recap used:</strong> ${esc(report.previousRecapFrom ?? "none")}</p>
+<p><strong>Vocabulary (${report.vocab.length}):</strong> ${esc(report.vocab.join(", ") || "none")}</p>
+<table><thead><tr><th>Chunk</th><th>Status</th><th>Speakers</th><th>Transcribe</th><th>Notes</th><th>Filtered lines</th><th>Crosstalk</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
 async function writeJournal(result) {
   const journalName = game.settings.get(MODULE_NAME, "journal-name") || "Session Recaps";
   let entry = game.journal.getName(journalName);
@@ -221,7 +239,7 @@ async function writeJournal(result) {
       title: { show: true, level: 1 },
       // Transcript is GM-only; players see the recap page.
       ownership: { default: CONST.DOCUMENT_OWNERSHIP_LEVELS.NONE },
-      text: { format: CONST.JOURNAL_ENTRY_PAGE_FORMATS.HTML, content: `${pages.gmHeader}\n<h2>Transcript</h2>\n${transcriptHtml(result.transcript)}` }
+      text: { format: CONST.JOURNAL_ENTRY_PAGE_FORMATS.HTML, content: `${pages.gmHeader}\n<h2>Transcript</h2>\n${transcriptHtml(result.transcript)}\n<hr>\n${reportHtml(result.report)}` }
     }
   ]);
   return recap;

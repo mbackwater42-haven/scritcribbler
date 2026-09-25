@@ -22,6 +22,16 @@ Hooks.once("init", () => {
     default: ""
   });
 
+  game.settings.register(MODULE_NAME, "use-previous-recap", {
+    name: "Use previous recap for continuity",
+    hint: "Give the summarizer the last session's recap from this world, for name spellings and open threads. Nothing from it is accepted as this session's events.",
+    scope: "world",
+    config: true,
+    restricted: true,
+    type: Boolean,
+    default: true
+  });
+
   game.settings.register(MODULE_NAME, "journal-name", {
     name: "Recap journal",
     hint: "Journal entry that recaps are added to. Created (visible to players) if it does not exist.",

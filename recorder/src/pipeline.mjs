@@ -46,15 +46,72 @@ const hms = (sec) => {
   return [Math.floor(s / 3600), Math.floor((s % 3600) / 60), s % 60].map((n) => String(n).padStart(2, "0")).join(":");
 };
 
+/** What happened during processing: for debugging recaps from the journal instead of logs. */
+export function processingReport(session) {
+  const d = session.data;
+  return {
+    models: { whisper: d.chunks.find((c) => c.report?.whisperModel)?.report.whisperModel ?? d.model?.whisper ?? null, ollama: d.model?.ollama ?? null },
+    recapStatus: d.recapStatus ?? null,
+    stopToRecapSec: d.processingSec ?? null,
+    summarizeSec: d.summarizeSec ?? null,
+    previousRecapFrom: d.previousRecapFrom ?? null,
+    vocab: d.vocab ?? [],
+    chunks: d.chunks.map((c) => ({
+      index: c.index,
+      status: c.status,
+      speakers: c.report?.speakers ?? null,
+      transcribeSec: c.report?.transcribeSec ?? null,
+      notesSec: c.report?.notesSec ?? null,
+      dropped: c.report?.dropped ?? {},
+      crosstalk: c.report?.crosstalk ?? []
+    }))
+  };
+}
+
 function readNotes(session, index) {
   const file = path.join(session.dir, `chunk-${String(index).padStart(3, "0")}`, "notes.md");
   return fs.existsSync(file) ? fs.readFileSync(file, "utf8").trim() || undefined : undefined;
 }
 
+const CROSSTALK_WINDOW_S = 2.0;   // other speaker's words must be this close in time
+const CROSSTALK_COVERAGE = 0.8;    // share of a line's words also said by the other speaker
+const CROSSTALK_QUIETER_DB = 6;    // bleed on a mic is much quieter than the speaker's own mic (~10 dB in tests)
+
+const tokens = (t) => String(t).toLowerCase().match(/[a-z0-9']+/g) || [];
+
+/**
+ * A player on speakers (no headphones) puts other voices into their own mic, so one line
+ * shows up on two tracks. Whisper splits it differently on each track, so lines are not
+ * compared one-to-one: a line is bleed when most of its words were said at the same time
+ * by another speaker whose copy is clearly louder. A player's real speech is loud on their
+ * own mic, so it never passes the loudness test even when the words overlap.
+ */
+export function removeCrosstalk(segments) {
+  const report = [];
+  const kept = segments.filter((seg) => {
+    const own = tokens(seg.text);
+    if (!own.length || seg.level == null) return true;
+    const others = segments.filter((o) => o.speaker !== seg.speaker && o.level != null
+      && o.start <= seg.end + CROSSTALK_WINDOW_S && o.end >= seg.start - CROSSTALK_WINDOW_S);
+    if (!others.length) return true;
+    const bag = new Map();
+    for (const w of others.flatMap((o) => tokens(o.text))) bag.set(w, (bag.get(w) || 0) + 1);
+    let covered = 0;
+    for (const w of own) if (bag.get(w) > 0) { covered++; bag.set(w, bag.get(w) - 1); }
+    const loudest = others.reduce((a, b) => (b.level > a.level ? b : a));
+    const isBleed = covered / own.length >= CROSSTALK_COVERAGE && loudest.level - seg.level >= CROSSTALK_QUIETER_DB;
+    if (isBleed) report.push({ t: hms(seg.start), removedFrom: seg.speaker, keptFor: loudest.speaker, text: seg.text, levels: [seg.level, loudest.level] });
+    return !isBleed;
+  });
+  return { segments: kept, removed: report };
+}
+
 /** Serial job queue: the desktop has one GPU, so chunks and summaries run one at a time. */
 export class Pipeline {
-  constructor() {
+  /** @param {{previousRecap?: (session) => string|null}} hooks */
+  constructor(hooks = {}) {
     this.tail = Promise.resolve();
+    this.previousRecap = hooks.previousRecap ?? (() => null);
   }
 
   enqueue(label, fn) {
@@ -74,7 +131,9 @@ export class Pipeline {
     const entry = session.data.chunks[index];
     if (!entry || entry.status !== "recorded") return;
     const dir = path.join(session.dir, `chunk-${String(index).padStart(3, "0")}`);
-    const segments = [];
+    let segments = [];
+    const report = { speakers: 0, dropped: {}, transcribeSec: 0, notesSec: null, crosstalk: [] };
+    const t0 = Date.now();
     try {
       for (const sp of entry.speakers || []) {
         if (sp.voicedSeconds < MIN_VOICED_SECONDS) continue;
@@ -87,15 +146,23 @@ export class Pipeline {
           if (session.data.vocab?.length) form.append("vocab", session.data.vocab.join("\n"));
           return backend("/transcribe-chunk", { method: "POST", body: form });
         });
+        report.speakers++;
+        report.whisperModel = res.model ?? report.whisperModel;
+        for (const [k, v] of Object.entries(res.dropped || {})) report.dropped[k] = (report.dropped[k] || 0) + v;
         for (const seg of res.segments || []) {
           const text = String(seg.text || "").trim();
-          if (text) segments.push({ speaker: label, start: entry.startSec + seg.start, end: entry.startSec + seg.end, text });
+          if (text) segments.push({ speaker: label, start: entry.startSec + seg.start, end: entry.startSec + seg.end, text, level: seg.level });
         }
       }
       segments.sort((a, b) => a.start - b.start);
+      const deduped = removeCrosstalk(segments);
+      segments = deduped.segments;
+      report.crosstalk = deduped.removed;
+      report.transcribeSec = Math.round((Date.now() - t0) / 1000);
+      entry.report = report;
       fs.writeFileSync(path.join(dir, "transcript.json"), JSON.stringify(segments, null, 2));
       entry.status = "transcribed";
-      session.addLog(`chunk ${index} transcribed (${segments.length} segments)`);
+      session.addLog(`chunk ${index} transcribed (${segments.length} segments${report.crosstalk.length ? `, ${report.crosstalk.length} crosstalk duplicates removed` : ""})`);
     } catch (e) {
       entry.status = "error";
       entry.error = e.message;
@@ -116,6 +183,7 @@ export class Pipeline {
     const notesFile = path.join(dir, "notes.md");
     fs.rmSync(notesFile, { force: true });
     if (!segments.length) return;
+    const t0 = Date.now();
     try {
       const res = await backend("/chunk-notes", {
         method: "POST",
@@ -127,6 +195,7 @@ export class Pipeline {
         })
       });
       fs.writeFileSync(notesFile, String(res.notes || "").trim());
+      if (entry.report) entry.report.notesSec = Math.round((Date.now() - t0) / 1000);
       session.addLog(`chunk ${index} notes ready`);
     } catch (e) {
       session.addLog(`chunk ${index} notes skipped (${e.message}); will be made at the end`);
@@ -190,6 +259,9 @@ export class Pipeline {
         d.recapStatus = "no-story";
         d.recapNote = "The chunk notes found no story events.";
       } else {
+        const previous = d.usePreviousRecap === false ? null : this.previousRecap(session);
+        d.previousRecapFrom = previous?.from ?? null;
+        const t0 = Date.now();
         const res = await withRetry(session, "summarize", () =>
           backend("/summarize", {
             method: "POST",
@@ -200,11 +272,15 @@ export class Pipeline {
               vocab: d.vocab ?? [],
               duration_seconds: session.durationSec(),
               speakers: d.spokenSpeakers,
+              // Context for spellings and continuing threads only. The grounding check below
+              // uses this session's transcript and notes, never the previous recap.
+              previous_recap: previous?.text ?? null,
               chunks
             })
           })
         );
         d.model = res.model || null;
+        d.summarizeSec = Math.round((Date.now() - t0) / 1000);
         const text = stripEmptySections(String(res.summary || "").trim());
         if (!text || text === "NO_STORY") {
           d.recapStatus = "no-story";
@@ -223,6 +299,7 @@ export class Pipeline {
         }
       }
 
+      d.processingSec = d.processingStartedAt ? Math.round((Date.now() - Date.parse(d.processingStartedAt)) / 1000) : null;
       d.recapFile = this.writeRecap(session, lines);
       d.state = "done";
       d.error = null;
@@ -254,6 +331,7 @@ export class Pipeline {
       "",
       ...(d.recapStatus === "unverified" ? ["## Unverified AI recap (not shown to players)", "", d.summary, ""] : []),
       ...(d.notes ? ["## Chunk notes", "", d.notes, ""] : []),
+      "## Processing report", "", "```json", JSON.stringify(processingReport(session), null, 2), "```", "",
       "---",
       "",
       "## Transcript",

@@ -148,7 +148,15 @@ export class RecordingDialog extends HandlebarsApplicationMixin(ApplicationV2) {
     await this.#withBusy(async () => {
       await api("/sessions/start", {
         method: "POST",
-        body: { world: game.world.id, worldTitle: game.world.title, room, sessionName, roster: roster(), vocab: campaignVocab() }
+        body: {
+          world: game.world.id,
+          worldTitle: game.world.title,
+          room,
+          sessionName,
+          roster: roster(),
+          vocab: campaignVocab(),
+          usePreviousRecap: game.settings.get(MODULE_NAME, "use-previous-recap")
+        }
       });
       this.sessionName = "";
       ui.notifications.info(`Scrit Cribbler | Recording "${sessionName}" on the server.`);
@@ -192,6 +200,10 @@ export class RecordingDialog extends HandlebarsApplicationMixin(ApplicationV2) {
       content: "<p>Transcribe and summarize this recording again? A new recap page is added to the journal when it finishes.</p>"
     });
     if (!ok) return;
-    await this.#withBusy(() => api(`/sessions/${target.dataset.sessionId}/reprocess`, { method: "POST" }));
+    // Fresh vocabulary: older sessions have none, and the party's gear may have changed.
+    await this.#withBusy(() => api(`/sessions/${target.dataset.sessionId}/reprocess`, {
+      method: "POST",
+      body: { vocab: campaignVocab(), usePreviousRecap: game.settings.get(MODULE_NAME, "use-previous-recap") }
+    }));
   }
 }
