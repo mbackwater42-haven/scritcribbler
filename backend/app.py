@@ -40,6 +40,9 @@ load_dotenv()
 OLLAMA_API_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434/api/generate")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
 OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
+# Ollama unloads a model after 5 idle minutes by default, so each 10-minute chunk paid the
+# full load again (notes took 114 s on a short clip). Keep it loaded across chunks.
+OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "30m")
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "small")
 WHISPER_COMPUTE = os.getenv("WHISPER_COMPUTE", "int8")
 WHISPER_THREADS = int(os.getenv("WHISPER_THREADS", "0"))  # 0 = let CTranslate2 decide
@@ -106,7 +109,8 @@ def health():
 @app.route("/models", methods=["GET"])
 def models():
     return jsonify({"status": "success", "engine": "faster-whisper", "whisper": WHISPER_MODEL,
-                    "compute": WHISPER_COMPUTE, "ollama": OLLAMA_MODEL, "num_ctx": OLLAMA_NUM_CTX})
+                    "compute": WHISPER_COMPUTE, "ollama": OLLAMA_MODEL, "num_ctx": OLLAMA_NUM_CTX,
+                    "keep_alive": OLLAMA_KEEP_ALIVE})
 
 
 # ------------------------------------------------------------------ transcription
@@ -308,6 +312,7 @@ def ollama(prompt, num_predict):
                 "model": OLLAMA_MODEL,
                 "prompt": prompt,
                 "stream": False,
+                "keep_alive": OLLAMA_KEEP_ALIVE,  # top-level field, not an option
                 # Sampling settings must be inside "options"; top-level ones are ignored.
                 "options": {"temperature": 0.2, "num_ctx": OLLAMA_NUM_CTX, "num_predict": num_predict},
             },
