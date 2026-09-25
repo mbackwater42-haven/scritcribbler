@@ -1,0 +1,9 @@
+node_modules/
+.env
+*.pem
+*.key
+*.crt
+certs/
+logs/
+venv/
+__pycache__/

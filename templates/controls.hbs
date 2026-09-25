@@ -1,0 +1,31 @@
+<section class="sc-controls">
+  {{#if tokenMissing}}
+    <p class="sc-warning"><i class="fas fa-key"></i> Set the <strong>Recorder token</strong> in Configure Settings → Scrit Cribbler first.</p>
+  {{else if error}}
+    <p class="sc-warning"><i class="fas fa-triangle-exclamation"></i> Recorder unreachable: {{error}}</p>
+  {{/if}}
+
+  {{#if active}}
+    <div class="sc-live">
+      <span class="sc-dot"></span>
+      <strong>Recording on server</strong>
+      <span class="sc-clock" data-started-at="{{active.startedAt}}">0:00:00</span>
+    </div>
+    <p class="sc-name">{{active.sessionName}}</p>
+    <button type="button" data-action="stop" {{#if busy}}disabled{{/if}}>
+      <i class="fas fa-stop"></i> Stop recording
+    </button>
+  {{else}}
+    <label class="sc-field">
+      <span>Session name</span>
+      <input type="text" name="session-name" value="{{sessionName}}" placeholder="{{defaultName}}" />
+    </label>
+    <button type="button" data-action="start" {{#if (or busy tokenMissing)}}disabled{{/if}}>
+      <i class="fas fa-microphone"></i> Start recording
+    </button>
+    <p class="sc-hint">
+      The Foundry server records everyone in the A/V room{{#if room}} (<code>{{room}}</code>){{/if}}, in 10-minute chunks.
+      You can close this window or reload; the recording keeps going until you press Stop.
+    </p>
+  {{/if}}
+</section>

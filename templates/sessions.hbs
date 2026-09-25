@@ -1,0 +1,30 @@
+<section class="sc-sessions">
+  {{#if active}}
+    <div class="sc-card">
+      <div class="sc-row"><span class="sc-badge {{active.stateClass}}">{{active.stateLabel}}</span> <span>{{active.progress}}</span></div>
+      <div class="sc-sub">Speakers heard: {{#if active.speakerList}}{{active.speakerList}}{{else}}<em>none yet (is anyone in the A/V room?)</em>{{/if}}</div>
+      {{#if active.lastLog}}<div class="sc-log">{{active.lastLog}}</div>{{/if}}
+    </div>
+  {{/if}}
+
+  {{#if recent.length}}
+    <h3>Recent sessions</h3>
+    {{#each recent}}
+      <div class="sc-card">
+        <div class="sc-row">
+          <span class="sc-badge {{stateClass}}">{{stateLabel}}</span>
+          <strong>{{sessionName}}</strong>
+          <span class="sc-sub">{{started}} · {{minutes}} min</span>
+        </div>
+        {{#if progress}}<div class="sc-sub">{{progress}}</div>{{/if}}
+        {{#if error}}<div class="sc-error">{{error}}</div>{{/if}}
+        {{#if recapLabel}}<div class="sc-sub"><i class="fas fa-circle-info"></i> {{recapLabel}}</div>{{/if}}
+        {{#if posted}}<div class="sc-sub"><i class="fas fa-book"></i> In the journal</div>{{/if}}
+        <div class="sc-actions">
+          {{#if canPost}}<button type="button" data-action="post" data-session-id="{{id}}"><i class="fas fa-book"></i> Post to journal</button>{{/if}}
+          {{#if canReprocess}}<button type="button" data-action="reprocess" data-session-id="{{id}}"><i class="fas fa-rotate"></i> Reprocess</button>{{/if}}
+        </div>
+      </div>
+    {{/each}}
+  {{/if}}
+</section>

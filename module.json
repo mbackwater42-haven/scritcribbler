@@ -1,13 +1,13 @@
 {
   "id": "scrit-cribbler",
   "title": "Scrit Cribbler",
-  "description": "Record game sessions and generate AI summaries locally. Requires the Scrit Cribbler backend service running on your network.",
+  "description": "Record game sessions on the Foundry server (every voice in the LiveKit A/V room), transcribe and summarize them with a self-hosted Whisper + Ollama backend, and post recaps to a journal.",
   "authors": [
     {
       "name": "mbackwater42"
     }
   ],
-  "version": "1.0.4",
+  "version": "1.1.0",
   "compatibility": {
     "minimum": "13",
     "verified": "14"
@@ -17,6 +17,12 @@
       {
         "id": "dnd5e",
         "type": "system"
+      }
+    ],
+    "requires": [
+      {
+        "id": "avclient-livekit",
+        "type": "module"
       }
     ]
   },

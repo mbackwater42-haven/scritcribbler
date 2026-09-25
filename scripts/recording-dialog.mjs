@@ -1,256 +1,181 @@
-const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
+import { MODULE_NAME, api, currentRoom, roster, postRecap } from "./recorder-api.mjs";
 
-const MODULE_NAME = "scrit-cribbler";
-const RECORDINGS_FOLDER = "scrit-cribbler/recordings";
-const RECORDING_TIMESLICE_MS = 60000; // flush chunk every 60s (long-session safety)
+const { ApplicationV2, HandlebarsApplicationMixin, DialogV2 } = foundry.applications.api;
 
+const REFRESH_MS = 5000;
+const STATE_LABELS = {
+  recording: "Recording",
+  processing: "Processing",
+  done: "Done",
+  error: "Failed"
+};
+
+/**
+ * GM control panel. Recording happens on the Foundry server (scrit-recorder joins the
+ * LiveKit room), so this dialog only starts/stops it and shows progress. Closing it,
+ * reloading, or even a browser crash does not affect the recording.
+ */
 export class RecordingDialog extends HandlebarsApplicationMixin(ApplicationV2) {
   static DEFAULT_OPTIONS = {
     id: "scrit-cribbler-record",
-    tag: "form",
-    window: {
-      title: "Record Game Session",
-      resizable: true
-    },
-    position: { width: 600, height: "auto" },
-    classes: ["scrit-cribbler", "scrit-cribbler-dialog"]
-  };
-
-  static PARTS = {
-    form: {
-      template: `modules/${MODULE_NAME}/templates/record-dialog.hbs`
+    tag: "div",
+    window: { title: "Scrit Cribbler — Session Recording", resizable: true },
+    position: { width: 520, height: "auto" },
+    classes: ["scrit-cribbler", "scrit-cribbler-dialog"],
+    actions: {
+      start: RecordingDialog.#onStart,
+      stop: RecordingDialog.#onStop,
+      post: RecordingDialog.#onPost,
+      reprocess: RecordingDialog.#onReprocess
     }
   };
 
-  mediaRecorder = null;
-  audioChunks = [];
-  isRecording = false;
-  recordingStart = null;
-  recordingBlob = null; // kept in memory; also mirrored to disk for archival
-  timerInterval = null;
+  static PARTS = {
+    controls: { template: `modules/${MODULE_NAME}/templates/controls.hbs` },
+    sessions: { template: `modules/${MODULE_NAME}/templates/sessions.hbs` }
+  };
 
-  async _prepareContext(options) {
+  sessionName = "";
+  status = { active: null, sessions: [], error: null };
+  busy = false;
+  #refreshTimer = null;
+  #clockTimer = null;
+
+  async _prepareContext() {
+    const s = this.status;
+    const active = s.sessions.find((x) => x.id === s.active) ?? null;
     return {
-      isRecording: this.isRecording,
-      recordingTime: this.getRecordingTime(),
-      hasSavedRecording: !!this.recordingBlob
+      tokenMissing: !game.settings.get(MODULE_NAME, "recorder-token"),
+      room: currentRoom(),
+      error: s.error,
+      busy: this.busy,
+      sessionName: this.sessionName,
+      defaultName: "Session",
+      active: active && this.#view(active),
+      recent: s.sessions.filter((x) => x.id !== s.active).slice(0, 6).map((x) => this.#view(x))
     };
   }
 
-  getRecordingTime() {
-    if (!this.recordingStart) return "00:00";
-    const elapsed = Math.floor((Date.now() - this.recordingStart) / 1000);
-    const minutes = Math.floor(elapsed / 60);
-    const seconds = elapsed % 60;
-    return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+  #view(s) {
+    const total = s.chunks.length;
+    const transcribed = s.chunks.filter((c) => c.status === "transcribed").length;
+    const failed = s.chunks.filter((c) => c.status === "error").length;
+    let progress = "";
+    if (s.state === "recording") progress = `Chunk ${total} in progress · ${transcribed} transcribed so far`;
+    else if (s.state === "processing") progress = `Transcribed ${transcribed}/${total} chunks${transcribed === total ? " · writing recap" : ""}`;
+    if (failed) progress += ` · ${failed} chunk(s) failed`;
+    return {
+      ...s,
+      stateLabel: STATE_LABELS[s.state] ?? s.state,
+      stateClass: `state-${s.state}`,
+      started: new Date(s.startedAt).toLocaleString(),
+      minutes: Math.round(s.durationSec / 60),
+      progress,
+      speakerList: s.speakers.join(", "),
+      recapLabel: { "no-story": "No story recap (too little story content)", unverified: "AI recap withheld: mentioned things never said" }[s.recapStatus] ?? "",
+      canPost: s.state === "done" && !s.posted,
+      canReprocess: ["done", "error"].includes(s.state)
+    };
+  }
+
+  async refresh({ all = false } = {}) {
+    const before = this.status.active;
+    try {
+      const data = await api(`/sessions?world=${encodeURIComponent(game.world.id)}`);
+      this.status = { active: data.active && data.sessions.some((x) => x.id === data.active) ? data.active : null, sessions: data.sessions, error: null };
+    } catch (e) {
+      this.status = { ...this.status, error: e.message };
+    }
+    if (!this.rendered) return;
+    // Only redraw the controls (and the name field) when recording starts or stops.
+    const parts = all || before !== this.status.active ? ["controls", "sessions"] : ["sessions"];
+    await this.render({ parts });
+  }
+
+  async _onFirstRender(context, options) {
+    await super._onFirstRender(context, options);
+    this.#refreshTimer = setInterval(() => this.refresh(), REFRESH_MS);
+    this.#clockTimer = setInterval(() => this.#tickClock(), 1000);
+    this.refresh({ all: true });
   }
 
   _onRender(context, options) {
     super._onRender(context, options);
-    const html = this.element;
-
-    html.querySelector("[data-action='start-recording']")
-      ?.addEventListener("click", () => this.startRecording());
-
-    html.querySelector("[data-action='stop-recording']")
-      ?.addEventListener("click", () => this.stopRecording());
-
-    html.querySelector("[data-action='process-recording']")
-      ?.addEventListener("click", () => this.processRecording());
-
-    if (this.isRecording) {
-      this.timerInterval = setInterval(() => {
-        const el = html.querySelector(".recording-time");
-        if (el) el.textContent = this.getRecordingTime();
-      }, 1000);
-    }
+    const input = this.element.querySelector("input[name='session-name']");
+    input?.addEventListener("input", (ev) => (this.sessionName = ev.currentTarget.value));
+    this.#tickClock();
   }
 
-  async startRecording() {
+  async _onClose(options) {
+    clearInterval(this.#refreshTimer);
+    clearInterval(this.#clockTimer);
+    return super._onClose(options);
+  }
+
+  #tickClock() {
+    const el = this.element?.querySelector("[data-started-at]");
+    if (!el) return;
+    const secs = Math.max(0, Math.floor((Date.now() - Date.parse(el.dataset.startedAt)) / 1000));
+    const hh = Math.floor(secs / 3600);
+    const mm = String(Math.floor((secs % 3600) / 60)).padStart(2, "0");
+    const ss = String(secs % 60).padStart(2, "0");
+    el.textContent = `${hh}:${mm}:${ss}`;
+  }
+
+  async #withBusy(fn) {
+    this.busy = true;
+    await this.render({ parts: ["controls"] });
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-      const mimeType = "audio/webm;codecs=opus";
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        throw new Error("Browser does not support WebM Opus codec");
-      }
-
-      this.mediaRecorder = new MediaRecorder(stream, { mimeType });
-      this.audioChunks = [];
-      this.recordingStart = Date.now();
-      this.isRecording = true;
-
-      this.mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) this.audioChunks.push(event.data);
-      };
-
-      // timeslice flushes chunks periodically instead of only on stop()
-      this.mediaRecorder.start(RECORDING_TIMESLICE_MS);
-      this.render();
-      ui.notifications.info("Recording started...");
+      await fn();
     } catch (e) {
-      console.error("Scrit Cribbler | Microphone error:", e);
-      ui.notifications.error("Failed to access microphone. Check permissions.");
+      ui.notifications.error(`Scrit Cribbler | ${e.message}`);
+    } finally {
+      this.busy = false;
+      await this.refresh({ all: true });
     }
   }
 
-  async stopRecording() {
-    if (!this.mediaRecorder) return;
-
-    const stopped = new Promise((resolve) => {
-      this.mediaRecorder.addEventListener("stop", resolve, { once: true });
-    });
-
-    this.mediaRecorder.stop();
-    this.mediaRecorder.stream.getTracks().forEach((track) => track.stop());
-    await stopped;
-
-    this.isRecording = false;
-    if (this.timerInterval) clearInterval(this.timerInterval);
-
-    this.recordingBlob = new Blob(this.audioChunks, { type: "audio/webm" });
-    const duration = Math.floor((Date.now() - this.recordingStart) / 1000);
-
-    const sessionNameInput = this.element.querySelector("[name='session-name']");
-    const sessionName = sessionNameInput?.value || "Session";
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const filename = `${sessionName.replace(/[^\w\-]/g, "_")}-${timestamp}.webm`;
-
-    ui.notifications.info(`Recording complete (${Math.round(duration / 60)} min). Saving local copy...`);
-
-    try {
-      // createDirectory uses fs.mkdirSync without recursive:true, so nested
-      // paths must be created one level at a time (each throws harmlessly
-      // if that level already exists).
-      const parts = RECORDINGS_FOLDER.split("/");
-      let pathSoFar = "";
-      for (const part of parts) {
-        pathSoFar = pathSoFar ? `${pathSoFar}/${part}` : part;
-        await FilePicker.createDirectory("data", pathSoFar).catch(() => null);
-      }
-
-      const file = new File([this.recordingBlob], filename, { type: "audio/webm" });
-      await FilePicker.upload("data", RECORDINGS_FOLDER, file, {}, { notify: false });
-
-      console.log("Scrit Cribbler | Saved recording to", `${RECORDINGS_FOLDER}/${filename}`);
-      ui.notifications.info(`Recording saved: ${filename}`);
-      this.render();
-    } catch (e) {
-      // Local archival save failed, but the Blob is still in memory - processing can still proceed
-      console.error("Scrit Cribbler | Local save failed (recording still in memory):", e);
-      ui.notifications.warn(`Local save failed, but recording is still available to process: ${e.message}`);
-      this.render();
-    }
-  }
-
-  async processRecording() {
-    if (!this.recordingBlob) {
-      ui.notifications.warn("No recording to process");
+  static async #onStart() {
+    const room = currentRoom();
+    if (!room) {
+      ui.notifications.error("Scrit Cribbler | No A/V room found. Is LiveKit AVClient connected?");
       return;
     }
-
-    const sessionNameInput = this.element.querySelector("[name='session-name']");
-    const sessionName = sessionNameInput?.value || "Game Session";
-    const audioBlob = this.recordingBlob;
-
-    ui.notifications.info("Processing recording in the background... (may take 10+ minutes for long sessions). You'll get a chat message when it's done.");
-
-    // Close immediately - this is a long background job, no reason to make the
-    // GM sit and watch the dialog. Everything from here on runs detached.
-    this.close();
-
-    try {
-      const formData = new FormData();
-      formData.append("audio", audioBlob, "session.webm");
-      formData.append("session_name", sessionName);
-
-      const backendUrl = game.settings.get(MODULE_NAME, "backend-url");
-      const response = await fetch(`${backendUrl}/transcribe`, {
+    const sessionName = this.sessionName.trim() || "Session";
+    await this.#withBusy(async () => {
+      await api("/sessions/start", {
         method: "POST",
-        body: formData
+        body: { world: game.world.id, worldTitle: game.world.title, room, sessionName, roster: roster() }
       });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || `HTTP ${response.status}`);
-      }
-
-      const result = await response.json();
-      if (result.status !== "success") {
-        throw new Error(result.error || "Unknown error");
-      }
-
-      await this.addToRecapsJournal(result, sessionName);
-      await this.displayResults(result);
-
-      ui.notifications.info("Transcription complete! Summary added to Session Recaps.");
-    } catch (e) {
-      console.error("Scrit Cribbler | Process error:", e);
-      ui.notifications.error(`Processing failed: ${e.message}`);
-    }
-  }
-
-  async displayResults(result) {
-    const durationMin = Math.round(result.duration_seconds / 60);
-    const message = `
-      <div class="scrit-cribbler-results">
-        <h3>✓ Session Summary Processed</h3>
-        <p><strong>Duration:</strong> ${durationMin} minutes | <strong>Timestamp:</strong> ${new Date(result.timestamp).toLocaleString()}</p>
-        <hr />
-        <h4>Summary:</h4>
-        <p>${result.summary.split("\n").join("<br />")}</p>
-        <details>
-          <summary>Full Transcript (${result.transcript.length} chars)</summary>
-          <div style="max-height: 400px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: break-word; font-size: 0.9em;">${result.transcript}</div>
-        </details>
-        <p style="font-size: 0.9em; color: #999; margin-top: 1rem;">Summary saved to "Session Recaps" journal entry.</p>
-      </div>
-    `;
-
-    // V14 uses "style", not the removed "type"/CONST.CHAT_MESSAGE_TYPES
-    await ChatMessage.create({
-      content: message,
-      whisper: ChatMessage.getWhisperRecipients("GM"),
-      style: CONST.CHAT_MESSAGE_STYLES.OOC,
-      speaker: { alias: "Scrit Cribbler" }
+      this.sessionName = "";
+      ui.notifications.info(`Scrit Cribbler | Recording "${sessionName}" on the server.`);
     });
   }
 
-  async addToRecapsJournal(result, sessionName) {
-    let recapsEntry = game.journal.getName("Session Recaps");
+  static async #onStop() {
+    const id = this.status.active;
+    if (!id) return;
+    const ok = await DialogV2.confirm({
+      window: { title: "Stop recording?" },
+      content: "<p>Stop recording and start writing the recap? This cannot be resumed.</p>"
+    });
+    if (!ok) return;
+    await this.#withBusy(async () => {
+      await api(`/sessions/${id}/stop`, { method: "POST" });
+      ui.notifications.info("Scrit Cribbler | Recording stopped. The recap will be posted to the journal when it is ready.");
+    });
+  }
 
-    if (!recapsEntry) {
-      recapsEntry = await JournalEntry.create({
-        name: "Session Recaps",
-        ownership: { default: CONST.DOCUMENT_OWNERSHIP_LEVELS.OBSERVER }
-      });
-      console.log("Scrit Cribbler | Created Session Recaps journal");
-    }
+  static async #onPost(_event, target) {
+    await this.#withBusy(() => postRecap(target.dataset.sessionId));
+  }
 
-    const pageDate = new Date(result.timestamp);
-    const durationMin = Math.round(result.duration_seconds / 60);
-    const pageTitle = `${sessionName} — ${pageDate.toLocaleDateString()} (${durationMin} min)`;
-
-    await JournalEntryPage.create(
-      {
-        name: pageTitle,
-        type: "text",
-        text: {
-          content: `
-            <p><strong>Date:</strong> ${pageDate.toLocaleString()} | <strong>Duration:</strong> ${durationMin} minutes</p>
-            <hr />
-            <h3>Summary</h3>
-            <p>${result.summary.split("\n").join("<br /><br />")}</p>
-            <details>
-              <summary>Full Transcript</summary>
-              <div style="background: var(--color-bg); padding: 1rem; border-radius: 4px; max-height: 500px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: break-word;">${result.transcript}</div>
-            </details>
-          `
-        }
-      },
-      { parent: recapsEntry }
-    );
-
-    console.log("Scrit Cribbler | Added page to Session Recaps:", pageTitle);
+  static async #onReprocess(_event, target) {
+    const ok = await DialogV2.confirm({
+      window: { title: "Reprocess recording?" },
+      content: "<p>Transcribe and summarize this recording again? A new recap page is added to the journal when it finishes.</p>"
+    });
+    if (!ok) return;
+    await this.#withBusy(() => api(`/sessions/${target.dataset.sessionId}/reprocess`, { method: "POST" }));
   }
 }

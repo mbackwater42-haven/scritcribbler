@@ -1,42 +1,37 @@
+import { MODULE_NAME, startRecapPoller } from "./recorder-api.mjs";
 import { RecordingDialog } from "./recording-dialog.mjs";
 
-const MODULE_NAME = "scrit-cribbler";
+Hooks.once("init", () => {
+  game.settings.register(MODULE_NAME, "recorder-url", {
+    name: "Recorder URL",
+    hint: "Where the scrit-recorder service is reached from the browser. The default /scrit is the nginx proxy on the Foundry server; change only if you moved it.",
+    scope: "world",
+    config: true,
+    restricted: true,
+    type: String,
+    default: "/scrit"
+  });
 
-class ScritCribblerApp {
-  static async initialize() {
-    game.settings.register(MODULE_NAME, "backend-url", {
-      name: "Backend URL",
-      hint: "HTTP endpoint for transcription service (e.g., http://192.168.0.27:5000)",
-      scope: "world",
-      config: true,
-      type: String,
-      default: "http://localhost:5000"
-    });
+  // Client scope: stored only in this browser, never sent to players.
+  game.settings.register(MODULE_NAME, "recorder-token", {
+    name: "Recorder token (GM only)",
+    hint: "SCRIT_API_TOKEN from the recorder's .env on the Foundry server. Stored only in this browser.",
+    scope: "client",
+    config: true,
+    type: String,
+    default: ""
+  });
 
-    game.settings.register(MODULE_NAME, "auto-journal", {
-      name: "Auto-create journal entries",
-      hint: "Automatically create journal entry for summary (requires GM)",
-      scope: "world",
-      config: true,
-      type: Boolean,
-      default: true
-    });
-
-    console.log("Scrit Cribbler | Module initialized");
-  }
-
-  static async testBackend() {
-    const backendUrl = game.settings.get(MODULE_NAME, "backend-url");
-    try {
-      const response = await fetch(`${backendUrl}/health`);
-      const data = await response.json();
-      return data.status === "ok";
-    } catch (e) {
-      console.error("Scrit Cribbler | Backend unreachable:", e);
-      return false;
-    }
-  }
-}
+  game.settings.register(MODULE_NAME, "journal-name", {
+    name: "Recap journal",
+    hint: "Journal entry that recaps are added to. Created (visible to players) if it does not exist.",
+    scope: "world",
+    config: true,
+    restricted: true,
+    type: String,
+    default: "Session Recaps"
+  });
+});
 
 // V14 registers scene control buttons via this hook - there is no DOM to
 // inject into via renderSceneControls anymore.
@@ -45,7 +40,7 @@ Hooks.on("getSceneControlButtons", (controls) => {
 
   controls.tokens.tools["scrit-cribbler"] = {
     name: "scrit-cribbler",
-    title: "Record Session",
+    title: "Session Recording",
     icon: "fas fa-microphone",
     order: Object.keys(controls.tokens.tools).length,
     button: true,
@@ -59,7 +54,5 @@ Hooks.on("getSceneControlButtons", (controls) => {
 });
 
 Hooks.once("ready", () => {
-  ScritCribblerApp.initialize();
+  if (game.user.isGM) startRecapPoller();
 });
-
-export { ScritCribblerApp };
