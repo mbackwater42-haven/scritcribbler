@@ -144,7 +144,7 @@ const routes = [
         }
       }
     }
-    Object.assign(s.data, { state: "processing", error: null, posted: false });
+    Object.assign(s.data, { state: "processing", error: null, posted: false, dismissed: false });
     s.addLog("reprocess requested");
     startProcessing(s);
     return [200, s.summary()];
@@ -166,6 +166,29 @@ const routes = [
       model: d.model,
       transcript: pipeline.transcript(s)
     }];
+  }],
+
+  // Hide finished sessions from the GM panel. Files, recaps and journal pages are untouched.
+  ["POST", /^\/sessions\/([\w-]+)\/dismiss$/, true, (_req, m) => {
+    const s = store.get(m[1]);
+    if (!s) return [404, { error: "no such session" }];
+    if (!["done", "error"].includes(s.data.state)) return [409, { error: `session is ${s.data.state}` }];
+    s.data.dismissed = true;
+    s.save();
+    return [200, s.summary()];
+  }],
+
+  ["POST", /^\/sessions\/dismiss-all$/, true, async (req) => {
+    const { world } = await readJson(req);
+    if (!world) return [400, { error: "world is required" }];
+    let count = 0;
+    for (const s of store.list(String(world))) {
+      if (!["done", "error"].includes(s.data.state) || s.data.dismissed) continue;
+      s.data.dismissed = true;
+      s.save();
+      count++;
+    }
+    return [200, { dismissed: count }];
   }],
 
   ["POST", /^\/sessions\/([\w-]+)\/posted$/, true, (_req, m) => {

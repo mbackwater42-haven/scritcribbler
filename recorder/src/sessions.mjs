@@ -100,6 +100,7 @@ export class Session {
       speakers: Object.keys(d.participants).map((i) => this.label(i)),
       error: d.error,
       posted: d.posted,
+      dismissed: !!d.dismissed,
       recapFile: d.recapFile,
       recapStatus: d.recapStatus ?? null,
       lastLog: d.log.at(-1) ?? null

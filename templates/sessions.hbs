@@ -8,9 +8,19 @@
   {{/if}}
 
   {{#if recent.length}}
-    <h3>Recent sessions</h3>
+    <div class="sc-recent-head">
+      <h3>Recent sessions</h3>
+      <button type="button" class="sc-clear-all" data-action="dismissAll" data-tooltip="Hide all finished sessions (files and journal pages are kept)">
+        <i class="fas fa-broom"></i> Clear all
+      </button>
+    </div>
     {{#each recent}}
       <div class="sc-card">
+        {{#if canDismiss}}
+          <button type="button" class="sc-dismiss" data-action="dismiss" data-session-id="{{id}}" data-tooltip="Hide from this list (files and journal pages are kept)" aria-label="Hide from list">
+            <i class="fas fa-xmark"></i>
+          </button>
+        {{/if}}
         <div class="sc-row">
           <span class="sc-badge {{stateClass}}">{{stateLabel}}</span>
           <strong>{{sessionName}}</strong>

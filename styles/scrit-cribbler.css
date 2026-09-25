@@ -71,12 +71,28 @@
   font-style: italic;
 }
 
-.scrit-cribbler-dialog .sc-sessions h3 {
-  margin: 0.5rem 0 0;
+.scrit-cribbler-dialog .sc-recent-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
   border-bottom: 1px solid var(--color-border, currentColor);
 }
 
+.scrit-cribbler-dialog .sc-recent-head h3 {
+  flex: 1;
+  margin: 0;
+  border: none;
+}
+
+.scrit-cribbler-dialog .sc-clear-all {
+  flex: 0 0 auto;
+  width: auto;
+  font-size: 0.85em;
+}
+
 .scrit-cribbler-dialog .sc-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
@@ -121,3 +137,26 @@
 .scrit-cribbler-dialog .sc-badge.state-processing { background: #2f6fb3; }
 .scrit-cribbler-dialog .sc-badge.state-done { background: #2e7d32; }
 .scrit-cribbler-dialog .sc-badge.state-error { background: #8e2424; }
+
+/* Hide-from-list button, top-right of each finished session */
+.scrit-cribbler-dialog .sc-dismiss {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  width: 1.6rem;
+  height: 1.6rem;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  opacity: 0.6;
+  line-height: 1;
+}
+
+.scrit-cribbler-dialog .sc-dismiss:hover {
+  opacity: 1;
+}
+
+.scrit-cribbler-dialog .sc-card .sc-row {
+  padding-right: 1.8rem; /* keep text clear of the dismiss button */
+}

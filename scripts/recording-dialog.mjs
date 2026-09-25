@@ -26,7 +26,9 @@ export class RecordingDialog extends HandlebarsApplicationMixin(ApplicationV2) {
       start: RecordingDialog.#onStart,
       stop: RecordingDialog.#onStop,
       post: RecordingDialog.#onPost,
-      reprocess: RecordingDialog.#onReprocess
+      reprocess: RecordingDialog.#onReprocess,
+      dismiss: RecordingDialog.#onDismiss,
+      dismissAll: RecordingDialog.#onDismissAll
     }
   };
 
@@ -52,7 +54,7 @@ export class RecordingDialog extends HandlebarsApplicationMixin(ApplicationV2) {
       sessionName: this.sessionName,
       defaultName: "Session",
       active: active && this.#view(active),
-      recent: s.sessions.filter((x) => x.id !== s.active).slice(0, 6).map((x) => this.#view(x))
+      recent: s.sessions.filter((x) => x.id !== s.active && !x.dismissed).slice(0, 6).map((x) => this.#view(x))
     };
   }
 
@@ -74,7 +76,8 @@ export class RecordingDialog extends HandlebarsApplicationMixin(ApplicationV2) {
       speakerList: s.speakers.join(", "),
       recapLabel: { "no-story": "No story recap (too little story content)", unverified: "AI recap withheld: mentioned things never said" }[s.recapStatus] ?? "",
       canPost: s.state === "done" && !s.posted,
-      canReprocess: ["done", "error"].includes(s.state)
+      canReprocess: ["done", "error"].includes(s.state),
+      canDismiss: ["done", "error"].includes(s.state)
     };
   }
 
@@ -168,6 +171,19 @@ export class RecordingDialog extends HandlebarsApplicationMixin(ApplicationV2) {
 
   static async #onPost(_event, target) {
     await this.#withBusy(() => postRecap(target.dataset.sessionId));
+  }
+
+  static async #onDismiss(_event, target) {
+    await this.#withBusy(() => api(`/sessions/${target.dataset.sessionId}/dismiss`, { method: "POST" }));
+  }
+
+  static async #onDismissAll() {
+    const ok = await DialogV2.confirm({
+      window: { title: "Clear recent sessions?" },
+      content: "<p>Remove all finished sessions from this list? Recordings, recap files and journal pages are kept.</p>"
+    });
+    if (!ok) return;
+    await this.#withBusy(() => api("/sessions/dismiss-all", { method: "POST", body: { world: game.world.id } }));
   }
 
   static async #onReprocess(_event, target) {
