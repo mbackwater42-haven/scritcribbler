@@ -13,13 +13,27 @@ export const localDate = (d) =>
  * States: recording -> processing -> done | error. "posted" flips once a GM client
  * has written the recap into the world's journal.
  */
+/** Campaign names from the GM client: strings only, de-duplicated, bounded. */
+export function cleanVocab(list, existing = []) {
+  const out = [...existing];
+  const seen = new Set(out.map((t) => t.toLowerCase()));
+  for (const raw of Array.isArray(list) ? list : []) {
+    const t = String(raw ?? "").replace(/\s+/g, " ").trim().slice(0, 60);
+    if (t.length < 3 || seen.has(t.toLowerCase())) continue;
+    seen.add(t.toLowerCase());
+    out.push(t);
+    if (out.length >= 300) break;
+  }
+  return out;
+}
+
 export class Session {
   constructor(dir, data) {
     this.dir = dir;
     this.data = data;
   }
 
-  static create({ world, worldTitle, room, sessionName, roster }) {
+  static create({ world, worldTitle, room, sessionName, roster, vocab }) {
     const started = new Date();
     const stamp = `${localDate(started)}_${String(started.getHours()).padStart(2, "0")}${String(started.getMinutes()).padStart(2, "0")}`;
     const id = crypto.randomUUID();
@@ -32,6 +46,7 @@ export class Session {
       sessionName: sessionName || "Session",
       room,
       roster: roster || {},
+      vocab: cleanVocab(vocab),
       participants: {},
       startedAt: started.toISOString(),
       stoppedAt: null,

@@ -63,6 +63,60 @@ export function ungroundedTerms(recap, sourceText) {
   return { checked: terms.length, missing };
 }
 
+/** 1 - edit distance / longer length, case-insensitive. */
+export function similarity(a, b) {
+  a = a.toLowerCase();
+  b = b.toLowerCase();
+  if (!a.length || !b.length) return 0;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] !== b[j - 1]));
+    prev = cur;
+  }
+  return 1 - prev[b.length] / Math.max(a.length, b.length);
+}
+
+const HEARD_LIKE = 0.75;
+
+/** Was something that sounds like `name` actually said? Compares against word runs of similar length. */
+export function heardLike(name, sourceText) {
+  const target = words(name).join("");
+  const src = words(sourceText);
+  const n = words(name).length;
+  for (const len of new Set([n - 1, n, n + 1].filter((l) => l >= 1))) {
+    for (let i = 0; i + len <= src.length; i++) {
+      if (similarity(target, src.slice(i, i + len).join("")) >= HEARD_LIKE) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Drop terms the summarizer spelled from the campaign vocabulary ("Knight", "Scimitar of Speed")
+ * when the transcript has the mis-heard version ("night", "Simitar speed"). A vocabulary name
+ * nobody said anything like stays ungrounded.
+ */
+export function groundByVocab(result, sourceText, vocab = []) {
+  const sayable = vocab.filter((v) => heardLike(v, sourceText));
+  const vocabWords = new Set(sayable.flatMap((v) => words(v)));
+  const missing = result.missing.filter((t) => !vocabWords.has(t.toLowerCase()) && !vocabWords.has(t.toLowerCase().replace(/s$/, "")));
+  return { ...result, missing };
+}
+
+/** Remove sections the model filled with "none"/"no ..."/"nothing" instead of leaving them out. */
+export function stripEmptySections(md) {
+  const parts = String(md).split(/\n(?=## )/);
+  return parts
+    .filter((part) => {
+      if (!part.startsWith("## ")) return part.trim().length > 0;
+      const body = part.split("\n").slice(1).map((l) => l.replace(/^[\s\-*]+/, "").trim()).filter(Boolean);
+      return body.length > 0 && !body.every((l) => /^(no|none|nothing|n\/a)\b/i.test(l));
+    })
+    .join("\n")
+    .trim();
+}
+
 /** Unverified when at least 2 asserted terms, and 30% or more of them, are not in the source. */
 export function isUnverified({ checked, missing }) {
   return missing.length >= 2 && missing.length / Math.max(checked, 1) >= 0.3;

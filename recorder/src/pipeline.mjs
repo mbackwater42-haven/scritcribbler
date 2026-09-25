@@ -4,7 +4,7 @@ import { Agent, fetch, FormData } from "undici";
 import { config } from "./config.mjs";
 import { slug } from "./recorder.mjs";
 import { localDate } from "./sessions.mjs";
-import { MIN_STORY_WORDS, isUnverified, notesAreEmpty, ungroundedTerms, wordCount } from "./grounding.mjs";
+import { MIN_STORY_WORDS, groundByVocab, isUnverified, notesAreEmpty, stripEmptySections, ungroundedTerms, wordCount } from "./grounding.mjs";
 
 const MIN_VOICED_SECONDS = 1.5;
 const RETRY_DELAYS_S = [30, 60, 120, 300, 300, 300, 300, 300, 300, 300, 300, 300]; // ~1 h total
@@ -84,6 +84,7 @@ export class Pipeline {
           const buf = fs.readFileSync(path.join(dir, sp.file));
           form.append("audio", new Blob([buf], { type: "audio/ogg" }), sp.file);
           form.append("speaker", label);
+          if (session.data.vocab?.length) form.append("vocab", session.data.vocab.join("\n"));
           return backend("/transcribe-chunk", { method: "POST", body: form });
         });
         for (const seg of res.segments || []) {
@@ -121,6 +122,7 @@ export class Pipeline {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_name: session.data.sessionName,
+          vocab: session.data.vocab ?? [],
           chunk: { index, start: hms(entry.startSec), transcript: segments.map((g) => `[${hms(g.start)}] ${g.speaker}: ${g.text}`).join("\n") }
         })
       });
@@ -195,6 +197,7 @@ export class Pipeline {
             // No world/campaign title: it primes the model to invent published-adventure content.
             body: JSON.stringify({
               session_name: d.sessionName,
+              vocab: d.vocab ?? [],
               duration_seconds: session.durationSec(),
               speakers: d.spokenSpeakers,
               chunks
@@ -202,14 +205,14 @@ export class Pipeline {
           })
         );
         d.model = res.model || null;
-        const text = String(res.summary || "").trim();
+        const text = stripEmptySections(String(res.summary || "").trim());
         if (!text || text === "NO_STORY") {
           d.recapStatus = "no-story";
           d.recapNote = "The summarizer found no story events.";
         } else {
           d.summary = text;
           const source = [...spoken.map((l) => `${l.speaker} ${l.text}`), ...allNotes.filter(Boolean)].join("\n");
-          const check = ungroundedTerms(text, source);
+          const check = groundByVocab(ungroundedTerms(text, source), source, d.vocab ?? []);
           if (isUnverified(check)) {
             d.recapStatus = "unverified";
             d.unverifiedTerms = check.missing;

@@ -4,7 +4,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { config } from "./config.mjs";
 import { LiveRecording, recoverChunkDir } from "./recorder.mjs";
-import { Session, SessionStore } from "./sessions.mjs";
+import { Session, SessionStore, cleanVocab } from "./sessions.mjs";
 import { Pipeline } from "./pipeline.mjs";
 
 const store = new SessionStore();
@@ -94,7 +94,8 @@ const routes = [
       worldTitle: String(b.worldTitle || b.world),
       room: String(b.room),
       sessionName: String(b.sessionName || "Session").slice(0, 120),
-      roster: typeof b.roster === "object" && b.roster ? b.roster : {}
+      roster: typeof b.roster === "object" && b.roster ? b.roster : {},
+      vocab: b.vocab
     });
     store.add(session);
     const recording = new LiveRecording(session, {
@@ -166,6 +167,17 @@ const routes = [
       model: d.model,
       transcript: pipeline.transcript(s)
     }];
+  }],
+
+  // Names from a scene the GM switched to mid-session; used for the chunks still to come.
+  ["POST", /^\/sessions\/([\w-]+)\/vocab$/, true, async (req, m) => {
+    const s = store.get(m[1]);
+    if (!s) return [404, { error: "no such session" }];
+    if (s.data.state !== "recording") return [409, { error: `session is ${s.data.state}` }];
+    const before = (s.data.vocab ?? []).length;
+    s.data.vocab = cleanVocab((await readJson(req)).vocab, s.data.vocab ?? []);
+    s.save();
+    return [200, { added: s.data.vocab.length - before, total: s.data.vocab.length }];
   }],
 
   // Hide finished sessions from the GM panel. Files, recaps and journal pages are untouched.

@@ -37,6 +37,58 @@ export function roster() {
 }
 
 /**
+ * Campaign names that speech recognition would otherwise mis-hear ("Talon" -> "talent",
+ * "Knight" -> "night"). Most important first: the backend keeps only the first ~700 chars.
+ * Only things the table is likely to say this session: player characters, what they carry
+ * or cast, and the scene(s) in view. Not every actor in the world: that would let the
+ * summarizer "correct" words into names nobody said.
+ */
+export function campaignVocab() {
+  const terms = [];
+  const add = (name) => {
+    const n = String(name ?? "").replace(/\s+/g, " ").trim();
+    if (n.length >= 3 && n.length <= 40) terms.push(n);
+  };
+  const characters = game.users.filter((u) => !u.isGM && u.character).map((u) => u.character);
+
+  for (const actor of characters) {
+    add(actor.name);
+    add(actor.name.split(" ")[0]);
+  }
+  for (const scene of new Set([game.scenes.viewed, game.scenes.active].filter(Boolean))) {
+    for (const token of scene.tokens) add(token.name);
+    add(scene.navName || scene.name);
+  }
+  const itemsByPriority = { weapon: [], magic: [], spell: [], feat: [] };
+  for (const actor of characters) {
+    for (const item of actor.items) {
+      const rarity = String(item.system?.rarity ?? "").toLowerCase();
+      if (item.type === "weapon") itemsByPriority.weapon.push(item.name);
+      else if (["equipment", "consumable", "loot", "container", "tool"].includes(item.type) && rarity && rarity !== "common") itemsByPriority.magic.push(item.name);
+      else if (item.type === "spell") itemsByPriority.spell.push(item.name);
+      else if (item.type === "feat") itemsByPriority.feat.push(item.name);
+    }
+  }
+  Object.values(itemsByPriority).flat().forEach(add);
+
+  const seen = new Set();
+  return terms.filter((t) => !seen.has(t.toLowerCase()) && seen.add(t.toLowerCase()));
+}
+
+/** While recording, send the names from each newly viewed scene (GM changed scenes mid-session). */
+export function trackSceneVocab() {
+  Hooks.on("canvasReady", async () => {
+    if (game.users.activeGM !== game.user || !game.settings.get(MODULE_NAME, "recorder-token")) return;
+    try {
+      const { active } = await api(`/sessions?world=${encodeURIComponent(game.world.id)}`);
+      if (active) await api(`/sessions/${active}/vocab`, { method: "POST", body: { vocab: campaignVocab() } });
+    } catch (e) {
+      console.warn("Scrit Cribbler | vocab update failed:", e.message);
+    }
+  });
+}
+
+/**
  * Background job on the active GM's client: any finished recap for this world that
  * is not yet in the journal gets posted. Runs on login too, so a recap that finished
  * while no GM was online is posted the next time one logs in.

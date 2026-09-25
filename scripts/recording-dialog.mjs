@@ -1,4 +1,4 @@
-import { MODULE_NAME, api, currentRoom, roster, postRecap } from "./recorder-api.mjs";
+import { MODULE_NAME, api, campaignVocab, currentRoom, roster, postRecap } from "./recorder-api.mjs";
 
 const { ApplicationV2, HandlebarsApplicationMixin, DialogV2 } = foundry.applications.api;
 
@@ -148,7 +148,7 @@ export class RecordingDialog extends HandlebarsApplicationMixin(ApplicationV2) {
     await this.#withBusy(async () => {
       await api("/sessions/start", {
         method: "POST",
-        body: { world: game.world.id, worldTitle: game.world.title, room, sessionName, roster: roster() }
+        body: { world: game.world.id, worldTitle: game.world.title, room, sessionName, roster: roster(), vocab: campaignVocab() }
       });
       this.sessionName = "";
       ui.notifications.info(`Scrit Cribbler | Recording "${sessionName}" on the server.`);

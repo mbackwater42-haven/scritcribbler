@@ -1,5 +1,6 @@
 Flask==3.0.3
 requests==2.32.3
-openai-whisper==20250625
 python-dotenv==1.0.1
 cheroot==11.1.2
+faster-whisper==1.2.1
+numpy

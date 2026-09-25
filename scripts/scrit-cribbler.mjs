@@ -1,4 +1,4 @@
-import { MODULE_NAME, startRecapPoller } from "./recorder-api.mjs";
+import { MODULE_NAME, startRecapPoller, trackSceneVocab } from "./recorder-api.mjs";
 import { RecordingDialog } from "./recording-dialog.mjs";
 
 Hooks.once("init", () => {
@@ -54,5 +54,7 @@ Hooks.on("getSceneControlButtons", (controls) => {
 });
 
 Hooks.once("ready", () => {
-  if (game.user.isGM) startRecapPoller();
+  if (!game.user.isGM) return;
+  startRecapPoller();
+  trackSceneVocab();
 });
