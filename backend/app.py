@@ -337,6 +337,34 @@ def condense(session_name, notes_block):
     return ollama(prompt, 900)
 
 
+# Player recaps carry no dice/combat numbers. Prompt rules alone did not hold with Mistral 7B
+# (it kept every damage number and summed two stated totals into a new one), so numbers are
+# removed from the notes before the final recap and from the recap itself.
+_DICE = [
+    # parentheticals about mechanics: "(total of 38)", "(not resistant to lightning)", "(18 to hit)"
+    (re.compile(r"\s*\([^()]*\b(?:total|damage|to hit|hit points?|hp|resistan\w*|vulnerab\w*|AC|DC|saving throw|save)\b[^()]*\)", re.I), ""),
+    # "a total of 116" / "another 18" / "22" right before "[type] damage"
+    (re.compile(r"\b(?:a total of |total of |another |an additional |an extra |additional |extra )?\d+\s+(?=(?:[a-z]+\s+)?damage\b)", re.I), ""),
+    # attack rolls: "hitting for 23", "that is a 23 to hit", "rolled a 17"
+    (re.compile(r"\bhitting for \d+", re.I), "hitting"),
+    (re.compile(r",?\s*(?:that is |which is |with |for |rolling |rolled |rolls |a roll of )?(?:a |an )?\d+\s+to hit\b", re.I), ""),
+    (re.compile(r"\b(?:rolled|rolls|rolling) (?:a |an )?\d+\b", re.I), "rolled"),
+    (re.compile(r"\b\d+\s*(?:hit points|hp)\b", re.I), "hit points"),
+    (re.compile(r"\b(?:AC|DC)\s*\d+\b"), ""),
+]
+
+
+def scrub_dice(text):
+    """Remove dice/combat numbers the recap must not contain; gold and item counts are kept."""
+    for pattern, repl in _DICE:
+        text = pattern.sub(repl, text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r"[ \t]+([,.;:)])", r"\1", text)
+    text = re.sub(r"\(\s*\)", "", text)
+    text = re.sub(r"\band\s+(,|\.)", r"\1", text)
+    return text
+
+
 NO_STORY = "NO_STORY"
 
 
@@ -425,14 +453,14 @@ def summarize():
         logger.info("  every chunk is '(no story events)'; skipping final recap")
         return jsonify({"status": "success", "summary": NO_STORY, "model": model})
 
-    recap = final_recap(meta, fit("\n\n".join(notes), notes_budget), vocab)
+    recap = final_recap(meta, fit(scrub_dice("\n\n".join(notes)), notes_budget), vocab)
     if NO_STORY in recap[:40]:
         recap = NO_STORY
     # Models sometimes open with a sentence before the first heading; drop it.
     first = recap.find("## ")
     if first > 0:
         recap = recap[first:]
-    recap = re.sub(r"\n{3,}", "\n\n", recap).strip()
+    recap = re.sub(r"\n{3,}", "\n\n", scrub_dice(recap)).strip()
     logger.info(f"Recap done ({len(recap)} chars)")
     return jsonify({"status": "success", "summary": recap, "model": model})
 
