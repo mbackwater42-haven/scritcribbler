@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { config } from "./config.mjs";
+import { audioExpiresAt } from "./retention.mjs";
 import { slug } from "./recorder.mjs";
 
 /** YYYY-MM-DD in the server's local time zone (sessions run in the evening; UTC would roll the date). */
@@ -30,6 +31,11 @@ export function cleanVocab(list, existing = []) {
   }
   return out;
 }
+
+const expiry = (d) => {
+  const t = audioExpiresAt(d);
+  return t == null ? null : new Date(t).toISOString();
+};
 
 export class Session {
   constructor(dir, data) {
@@ -122,6 +128,12 @@ export class Session {
       dismissed: !!d.dismissed,
       recapFile: d.recapFile,
       recapStatus: d.recapStatus ?? null,
+      keepAudio: !!d.keepAudio,
+      audioDeletedAt: d.audioDeletedAt ?? null,
+      audioExpiresAt: expiry(d),
+      // identity -> label, for "delete one person" in the panel
+      people: Object.fromEntries(Object.keys(d.participants).map((i) => [i, this.label(i)])),
+      removedSpeakers: d.removedSpeakers ?? [],
       lastLog: d.log.at(-1) ?? null
     };
   }
@@ -151,6 +163,7 @@ export class SessionStore {
   }
 
   add(s) { this.sessions.set(s.id, s); }
+  remove(id) { this.sessions.delete(id); }
   get(id) { return this.sessions.get(id); }
   list(world) {
     return [...this.sessions.values()]

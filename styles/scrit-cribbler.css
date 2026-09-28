@@ -160,3 +160,7 @@
 .scrit-cribbler-dialog .sc-card .sc-row {
   padding-right: 1.8rem; /* keep text clear of the dismiss button */
 }
+
+/* Delete dialog */
+.sc-choice { display: block; margin: 0.35rem 0; }
+.scrit-cribbler-dialog .sc-actions .sc-delete { color: var(--color-level-error, #c33); }

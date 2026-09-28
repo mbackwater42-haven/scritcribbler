@@ -105,7 +105,10 @@ const STORY_MAX_CHARS = 4000;
  * DOMParser does not run scripts or load images, unlike innerHTML.
  */
 export function storySoFar() {
-  const entry = game.journal.getName(game.settings.get(MODULE_NAME, "story-journal") || "");
+  // "Story So Far" also matches "The Story So Far" (and case differences).
+  const bare = (n) => String(n ?? "").trim().toLowerCase().replace(/^the\s+/, "");
+  const wanted = bare(game.settings.get(MODULE_NAME, "story-journal"));
+  const entry = wanted ? game.journal.find((j) => bare(j.name) === wanted) : null;
   if (!entry) return null;
   const text = entry.pages.contents
     .filter((p) => p.type === "text")

@@ -3,6 +3,20 @@ import { MODULE_NAME, api, campaignVocab, currentRoom, roster, postRecap, storyS
 const { ApplicationV2, HandlebarsApplicationMixin, DialogV2 } = foundry.applications.api;
 
 const REFRESH_MS = 5000;
+
+/** Public chat line, so every player knows when the table is recorded. */
+async function announce(content) {
+  await ChatMessage.create({ content, style: CONST.CHAT_MESSAGE_STYLES.OOC, speaker: { alias: "Scrit Cribbler" } });
+}
+
+async function retentionNote() {
+  try {
+    const { retentionDays } = await api("/storage");
+    return retentionDays ? ` Audio is deleted ${retentionDays} days after the recap is posted.` : "";
+  } catch {
+    return "";
+  }
+}
 const STATE_LABELS = {
   recording: "Recording",
   processing: "Processing",
@@ -28,7 +42,9 @@ export class RecordingDialog extends HandlebarsApplicationMixin(ApplicationV2) {
       post: RecordingDialog.#onPost,
       reprocess: RecordingDialog.#onReprocess,
       dismiss: RecordingDialog.#onDismiss,
-      dismissAll: RecordingDialog.#onDismissAll
+      dismissAll: RecordingDialog.#onDismissAll,
+      keep: RecordingDialog.#onKeep,
+      delete: RecordingDialog.#onDelete
     }
   };
 
@@ -76,8 +92,13 @@ export class RecordingDialog extends HandlebarsApplicationMixin(ApplicationV2) {
       speakerList: s.speakers.join(", "),
       recapLabel: { "no-story": "No story recap (too little story content)", unverified: "AI recap withheld: mentioned things never said" }[s.recapStatus] ?? "",
       canPost: s.state === "done" && !s.posted,
-      canReprocess: ["done", "error"].includes(s.state),
-      canDismiss: ["done", "error"].includes(s.state)
+      canReprocess: ["done", "error"].includes(s.state) && !s.audioDeletedAt,
+      canDismiss: ["done", "error"].includes(s.state),
+      finished: ["done", "error"].includes(s.state),
+      audioLabel: s.audioDeletedAt
+        ? `Audio deleted ${new Date(s.audioDeletedAt).toLocaleDateString()} (transcript and recap kept)`
+        : s.keepAudio ? "Audio kept (never deleted automatically)"
+          : s.audioExpiresAt ? `Audio kept until ${new Date(s.audioExpiresAt).toLocaleDateString()}` : ""
     };
   }
 
@@ -161,6 +182,7 @@ export class RecordingDialog extends HandlebarsApplicationMixin(ApplicationV2) {
       });
       this.sessionName = "";
       ui.notifications.info(`Scrit Cribbler | Recording "${sessionName}" on the server.`);
+      await announce(`<p><strong>🔴 This session is being recorded.</strong> Voices in the A/V chat are transcribed to write the session recap.${await retentionNote()}</p>`);
     });
   }
 
@@ -174,6 +196,7 @@ export class RecordingDialog extends HandlebarsApplicationMixin(ApplicationV2) {
     if (!ok) return;
     await this.#withBusy(async () => {
       await api(`/sessions/${id}/stop`, { method: "POST" });
+      await announce("<p><strong>⏹ Recording stopped.</strong></p>");
       ui.notifications.info("Scrit Cribbler | Recording stopped. The recap will be posted to the journal when it is ready.");
     });
   }
@@ -193,6 +216,48 @@ export class RecordingDialog extends HandlebarsApplicationMixin(ApplicationV2) {
     });
     if (!ok) return;
     await this.#withBusy(() => api("/sessions/dismiss-all", { method: "POST", body: { world: game.world.id } }));
+  }
+
+  static async #onKeep(_event, target) {
+    const s = this.status.sessions.find((x) => x.id === target.dataset.sessionId);
+    if (!s) return;
+    await this.#withBusy(() => api(`/sessions/${s.id}/keep`, { method: "POST", body: { keep: !s.keepAudio } }));
+  }
+
+  static async #onDelete(_event, target) {
+    const s = this.status.sessions.find((x) => x.id === target.dataset.sessionId);
+    if (!s) return;
+    const esc = foundry.utils.escapeHTML;
+    const people = Object.entries(s.people ?? {});
+    const content = `<p>What should be deleted from <strong>${esc(s.sessionName)}</strong>?</p>
+      <label class="sc-choice"><input type="radio" name="scope" value="session" checked> <strong>The whole session:</strong> audio, transcripts and the recap file on the server.</label>
+      ${s.audioDeletedAt ? "" : `<label class="sc-choice"><input type="radio" name="scope" value="audio"> <strong>Audio only:</strong> keep the transcript and recap. It can no longer be reprocessed.</label>`}
+      ${s.audioDeletedAt || !people.length ? "" : `<label class="sc-choice"><input type="radio" name="scope" value="speaker"> <strong>One person:</strong> remove their audio and lines, then rewrite the recap without them.</label>
+      <select name="identity">${people.map(([id, label]) => `<option value="${esc(id)}">${esc(label)}</option>`).join("")}</select>`}
+      <p class="sc-sub">Journal pages already posted are not changed; delete or edit those in the journal. This cannot be undone.</p>`;
+    const choice = await DialogV2.prompt({
+      window: { title: "Delete recording" },
+      content,
+      ok: {
+        label: "Delete",
+        icon: "fas fa-trash",
+        callback: (_ev, button) => ({ scope: button.form.elements.scope.value, identity: button.form.elements.identity?.value })
+      },
+      rejectClose: false
+    });
+    if (!choice) return;
+    await this.#withBusy(async () => {
+      const res = await api(`/sessions/${s.id}/delete`, { method: "POST", body: choice });
+      if (res.deleted === "speaker") {
+        await api(`/sessions/${s.id}/reprocess`, {
+          method: "POST",
+          body: { vocab: campaignVocab(), storySoFar: storySoFar(), usePreviousRecap: game.settings.get(MODULE_NAME, "use-previous-recap") }
+        });
+        ui.notifications.info(`Scrit Cribbler | Removed ${res.label}. Rewriting the recap without them; delete the old journal pages yourself.`);
+      } else {
+        ui.notifications.info(`Scrit Cribbler | Deleted (${res.deleted}).`);
+      }
+    });
   }
 
   static async #onReprocess(_event, target) {

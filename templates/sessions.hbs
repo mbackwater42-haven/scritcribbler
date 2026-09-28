@@ -30,9 +30,18 @@
         {{#if error}}<div class="sc-error">{{error}}</div>{{/if}}
         {{#if recapLabel}}<div class="sc-sub"><i class="fas fa-circle-info"></i> {{recapLabel}}</div>{{/if}}
         {{#if posted}}<div class="sc-sub"><i class="fas fa-book"></i> In the journal</div>{{/if}}
+        {{#if audioLabel}}<div class="sc-sub"><i class="fas fa-file-audio"></i> {{audioLabel}}</div>{{/if}}
         <div class="sc-actions">
           {{#if canPost}}<button type="button" data-action="post" data-session-id="{{id}}"><i class="fas fa-book"></i> Post to journal</button>{{/if}}
           {{#if canReprocess}}<button type="button" data-action="reprocess" data-session-id="{{id}}"><i class="fas fa-rotate"></i> Reprocess</button>{{/if}}
+          {{#if finished}}
+            {{#unless audioDeletedAt}}
+              <button type="button" data-action="keep" data-session-id="{{id}}" data-tooltip="{{#if keepAudio}}Allow automatic audio deletion again{{else}}Never delete this session's audio automatically{{/if}}">
+                <i class="fas {{#if keepAudio}}fa-lock-open{{else}}fa-lock{{/if}}"></i> {{#if keepAudio}}Stop keeping audio{{else}}Keep audio{{/if}}
+              </button>
+            {{/unless}}
+            <button type="button" class="sc-delete" data-action="delete" data-session-id="{{id}}"><i class="fas fa-trash"></i> Delete…</button>
+          {{/if}}
         </div>
       </div>
     {{/each}}

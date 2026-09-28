@@ -12,9 +12,9 @@ transcript for summarizing.
                                 vocab (optional, newline-separated campaign names),
                                 model (optional Whisper size override, for testing)
                           -> { status, segments: [{start, end, text}], dropped, model }
-  POST /chunk-notes       auth  JSON: { session_name, vocab?, chunk: {index, start, transcript} }
+  POST /chunk-notes       auth  JSON: { session_name, vocab?, previous_recap?, model?, chunk: {index, start, transcript} }
                           -> { status, notes }   (called during the session, once per chunk)
-  POST /summarize         auth  JSON: { session_name, duration_seconds, speakers, vocab?, previous_recap?,
+  POST /summarize         auth  JSON: { session_name, duration_seconds, speakers, vocab?, previous_recap?, model?,
                                         chunks: [{index, start, transcript, notes?}] }
                           -> { status, summary (markdown) | "NO_STORY", model }
 """
@@ -23,6 +23,7 @@ import logging
 import os
 import re
 import tempfile
+from contextvars import ContextVar
 import threading
 from datetime import datetime, timezone
 
@@ -311,23 +312,38 @@ def vocab_rule(vocab):
             "word used as a name), use the known spelling. Never mention a known name the transcript does not refer to.")
 
 
+# Summary model for the current request: OLLAMA_MODEL unless the caller names another
+# installed one (model comparisons). Per request, so concurrent calls don't mix.
+LLM_MODEL = ContextVar("llm_model", default=OLLAMA_MODEL)
+MODEL_NAME = re.compile(r"^[A-Za-z0-9._:/-]{1,80}$")
+# Reasoning models spend the token budget thinking unless told not to (Ollama "think": false,
+# docs.ollama.com/capabilities/thinking). Sent only to these; others use their default.
+THINKING_MODELS = re.compile(r"^(qwen3|deepseek-r1|magistral)", re.I)
+THINK_BLOCK = re.compile(r"<think>.*?</think>\s*", re.S)
+
+
+def use_llm(body):
+    name = str(body.get("model") or "").strip()
+    LLM_MODEL.set(name if MODEL_NAME.match(name) else OLLAMA_MODEL)
+
+
 def ollama(prompt, num_predict):
+    model = LLM_MODEL.get()
+    body = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "keep_alive": OLLAMA_KEEP_ALIVE,  # top-level field, not an option
+        # Sampling settings must be inside "options"; top-level ones are ignored.
+        "options": {"temperature": 0.2, "num_ctx": OLLAMA_NUM_CTX, "num_predict": num_predict},
+    }
+    if THINKING_MODELS.match(model):
+        body["think"] = False
     with gpu_lock:
-        r = requests.post(
-            OLLAMA_API_URL,
-            json={
-                "model": OLLAMA_MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "keep_alive": OLLAMA_KEEP_ALIVE,  # top-level field, not an option
-                # Sampling settings must be inside "options"; top-level ones are ignored.
-                "options": {"temperature": 0.2, "num_ctx": OLLAMA_NUM_CTX, "num_predict": num_predict},
-            },
-            timeout=1800,
-        )
+        r = requests.post(OLLAMA_API_URL, json=body, timeout=1800)
     if r.status_code != 200:
         raise RuntimeError(f"Ollama failed ({r.status_code}): {r.text[:300]}")
-    return r.json().get("response", "").strip()
+    return THINK_BLOCK.sub("", r.json().get("response", "")).strip()
 
 
 def approx_tokens(text):
@@ -350,7 +366,7 @@ def chunk_notes(session_name, chunk, vocab, background=None):
 Transcript segment:
 {fit(chunk['transcript'], budget)}
 
-Write concise bullet-point notes of what happened in the story in this segment: actions, discoveries, decisions, fights and their outcomes, NPCs met (with names as spoken), places, items gained or lost, and unresolved questions. Use "- " bullets only, no headings, no preamble. If nothing story-relevant happened, write "- (no story events)"."""
+Write concise bullet-point notes of what happened in the story in this segment: actions, discoveries, decisions, fights and their outcomes, NPCs met (with names as spoken), places, items gained or lost (only when the transcript says it was given, found, bought, taken or lost now; an item a character pulls out or uses was already theirs), and unresolved questions. Use "- " bullets only, no headings, no preamble. If nothing story-relevant happened, write "- (no story events)"."""
     return ollama(prompt, 500)
 
 
@@ -443,7 +459,7 @@ One or two short paragraphs telling what happened, in past tense, third person, 
 - NPCs and locations named in the notes, one line each.
 
 ## Loot & Rewards
-- Items, money, experience or favors gained or lost.
+- Only items, money or favors the notes say were given, found, bought, taken or lost IN THIS SESSION. An item a character already had, pulls out, uses or looks at is not loot; leave it out.
 
 ## Open Threads
 - Unresolved questions, promises, and where the party stopped. An open thread from the previous session may be repeated only if it is still unresolved in these notes."""
@@ -453,6 +469,7 @@ One or two short paragraphs telling what happened, in past tense, third person, 
 @app.route("/chunk-notes", methods=["POST"])
 def chunk_notes_route():
     body = request.get_json(silent=True) or {}
+    use_llm(body)
     chunk = body.get("chunk") or {}
     if not str(chunk.get("transcript", "")).strip():
         return jsonify({"status": "success", "notes": "- (no story events)"})
@@ -464,6 +481,7 @@ def chunk_notes_route():
 @app.route("/summarize", methods=["POST"])
 def summarize():
     meta = request.get_json(silent=True) or {}
+    use_llm(meta)
     chunks = [c for c in meta.get("chunks", []) if str(c.get("transcript", "")).strip() or c.get("notes")]
     if not chunks:
         return jsonify({"status": "error", "error": "No transcript text to summarize"}), 400
@@ -486,7 +504,7 @@ def summarize():
         logger.info(f"  condensing {len(notes)} note sets")
         notes = [condense(name, "\n\n".join(notes[i:i + 4])) for i in range(0, len(notes), 4)]
 
-    model = {"whisper": WHISPER_MODEL, "ollama": OLLAMA_MODEL}
+    model = {"whisper": WHISPER_MODEL, "ollama": LLM_MODEL.get()}
     if all(is_no_story(n.split("\n", 1)[-1]) for n in notes):
         logger.info("  every chunk is '(no story events)'; skipping final recap")
         return jsonify({"status": "success", "summary": NO_STORY, "model": model})

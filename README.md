@@ -37,6 +37,16 @@ The Foundry **server** records every voice in the LiveKit A/V room (GM and playe
 
    If no GM is online when processing finishes, the recap is posted the next time a GM logs in.
 5. **Reprocess** re-runs transcription and summary for a saved session, for example after a backend fix.
+6. Starting and stopping a recording posts a public chat line, so players always know when they are recorded.
+
+## Recordings and retention
+
+- Audio is deleted **60 days after the recap is posted** (`AUDIO_RETENTION_DAYS` in the recorder's `.env`; `0` keeps it forever). Transcripts, notes and recaps are kept. Until then any session can be reprocessed; after that, Reprocess is disabled.
+- The recorder looks for expired audio once a day (`AUDIO_SWEEP=daily`) or on the first day of each quarter (`AUDIO_SWEEP=quarterly`). Either way, only audio older than the retention age is deleted.
+- **Keep audio** on a session exempts it from automatic deletion.
+- **Delete…** on a session removes the whole session, the audio only, or one person. Removing one person deletes their audio and their lines, rebuilds the mixed track without them, and rewrites the recap. Journal pages that were already posted are not changed; delete or edit those yourself.
+- Recording will not start with less than 2 GB free on the server (`MIN_FREE_GB`).
+- Typical size: about 150 MB for a 4-hour session with 6 people (Opus, silence compresses to almost nothing).
 
 ## Files on the server
 

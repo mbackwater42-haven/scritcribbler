@@ -6,6 +6,7 @@ import { config } from "./config.mjs";
 import { LiveRecording, recoverChunkDir } from "./recorder.mjs";
 import { Session, SessionStore, cleanVocab } from "./sessions.mjs";
 import { Pipeline, processingReport } from "./pipeline.mjs";
+import { deleteAudio, deleteSession, freeBytes, removeSpeaker, scheduleSweep } from "./retention.mjs";
 
 const store = new SessionStore();
 const pipeline = new Pipeline({
@@ -90,6 +91,14 @@ async function readJson(req) {
 const routes = [
   ["GET", /^\/health$/, false, () => [200, { ok: true, recording: active?.session.summary() ?? null }]],
 
+  // Retention policy and disk space, for the panel and the "recording started" notice.
+  ["GET", /^\/storage$/, true, () => [200, {
+    retentionDays: config.audioRetentionDays,
+    sweep: config.audioSweep,
+    freeGb: Math.round(freeBytes() / 1e8) / 10,
+    minFreeGb: config.minFreeGb
+  }]],
+
   ["GET", /^\/sessions$/, true, (_req, _m, url) =>
     [200, { active: active?.session.id ?? null, sessions: store.list(url.searchParams.get("world")).map((s) => s.summary()) }]],
 
@@ -102,6 +111,8 @@ const routes = [
     if (active) return [409, { error: `Already recording "${active.session.data.sessionName}"`, active: active.session.summary() }];
     const b = await readJson(req);
     if (!b.world || !b.room) return [400, { error: "world and room are required" }];
+    const free = freeBytes() / 1e9;
+    if (free < config.minFreeGb) return [507, { error: `Only ${free.toFixed(1)} GB free on the server (minimum ${config.minFreeGb} GB). Free up space before recording.` }];
     const session = Session.create({
       world: String(b.world),
       worldTitle: String(b.worldTitle || b.world),
@@ -152,6 +163,7 @@ const routes = [
     const b = await readJson(req);
     if (!s) return [404, { error: "no such session" }];
     if (!["done", "error"].includes(s.data.state)) return [409, { error: `session is ${s.data.state}` }];
+    if (s.data.audioDeletedAt) return [410, { error: "This session's audio was deleted, so it cannot be reprocessed. The transcript and recap are kept." }];
     for (const c of s.data.chunks) {
       if (c.speakers?.length) c.status = "recorded";
       else {
@@ -231,8 +243,41 @@ const routes = [
     const s = store.get(m[1]);
     if (!s) return [404, { error: "no such session" }];
     s.data.posted = true;
+    s.data.postedAt ??= new Date().toISOString(); // retention counts from the first posting
     s.save();
     return [200, s.summary()];
+  }],
+
+  // Never delete this session's audio in the sweep (test cases, keepsakes).
+  ["POST", /^\/sessions\/([\w-]+)\/keep$/, true, async (req, m) => {
+    const s = store.get(m[1]);
+    if (!s) return [404, { error: "no such session" }];
+    s.data.keepAudio = (await readJson(req)).keep !== false;
+    s.addLog(s.data.keepAudio ? "audio marked keep" : "audio keep removed");
+    return [200, s.summary()];
+  }],
+
+  // Delete: {scope: "session"} everything; {scope: "audio"} audio only;
+  // {scope: "speaker", identity} one person (then reprocess without them).
+  ["POST", /^\/sessions\/([\w-]+)\/delete$/, true, async (req, m) => {
+    const s = store.get(m[1]);
+    if (!s) return [404, { error: "no such session" }];
+    if (!["done", "error"].includes(s.data.state)) return [409, { error: `session is ${s.data.state}; wait until it finishes` }];
+    const b = await readJson(req);
+    if (b.scope === "session") {
+      deleteSession(store, s);
+      return [200, { deleted: "session" }];
+    }
+    if (b.scope === "audio") {
+      const r = deleteAudio(s, "deleted by GM");
+      return [200, { deleted: "audio", ...r, session: s.summary() }];
+    }
+    if (b.scope === "speaker") {
+      if (!b.identity || !(b.identity in s.data.participants)) return [400, { error: "unknown speaker" }];
+      const r = await removeSpeaker(s, String(b.identity));
+      return [200, { deleted: "speaker", ...r, session: s.summary() }];
+    }
+    return [400, { error: "scope must be session, audio or speaker" }];
   }]
 ];
 
@@ -268,4 +313,5 @@ process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
 await recover();
+scheduleSweep(store);
 server.listen(config.port, config.host, () => console.log(`scrit-recorder listening on ${config.host}:${config.port}`));

@@ -40,5 +40,12 @@ export const config = {
   backendUrl: req("BACKEND_URL"),
   backendToken: req("BACKEND_TOKEN"),
   backendCa: process.env.BACKEND_CA || "",
-  ffmpeg: process.env.FFMPEG_PATH || "ffmpeg"
+  ffmpeg: process.env.FFMPEG_PATH || "ffmpeg",
+
+  // Audio is deleted this many days after the recap is posted (0 = keep forever).
+  audioRetentionDays: Number(process.env.AUDIO_RETENTION_DAYS ?? 60),
+  // How often old audio is looked for: "daily" or "quarterly" (1 Jan/Apr/Jul/Oct).
+  audioSweep: process.env.AUDIO_SWEEP === "quarterly" ? "quarterly" : "daily",
+  // Recording refuses to start with less free space than this.
+  minFreeGb: Number(process.env.MIN_FREE_GB ?? 2)
 };

@@ -346,7 +346,10 @@ export class Pipeline {
           d.recapNote = "The summarizer found no story events.";
         } else {
           d.summary = text;
-          const source = [...spoken.map((l) => `${l.speaker} ${l.text}`), ...allNotes.filter(Boolean)].join("\n");
+          // The GM's story-so-far counts as a source: names from it ("Arbalest's House of Ale
+          // and Slumber") are real, not invented. A previous AI recap does not count.
+          const story = d.storySoFar ? [d.storySoFar] : [];
+          const source = [...spoken.map((l) => `${l.speaker} ${l.text}`), ...allNotes.filter(Boolean), ...story].join("\n");
           const check = groundByVocab(ungroundedTerms(text, source), source, d.vocab ?? []);
           if (isUnverified(check)) {
             d.recapStatus = "unverified";
