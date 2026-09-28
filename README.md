@@ -24,6 +24,7 @@ The Foundry **server** records every voice in the LiveKit A/V room (GM and playe
 1. Enable the module in your world.
 2. As GM: **Configure Settings → Scrit Cribbler → Recorder token**, and paste `SCRIT_API_TOKEN` from the recorder's `.env`. The token is stored only in that browser.
 3. Optional: change **Recap journal** (default `Session Recaps`).
+4. Recommended: keep a GM-only journal entry named **Story So Far** (name set in settings). Write who the characters are, what they already carry, and the open threads. The summarizer reads it as background, so the recap does not report as new something a character already had. Without it, the previous recap from this world is used instead.
 
 ## Usage
 
@@ -39,12 +40,14 @@ The Foundry **server** records every voice in the LiveKit A/V room (GM and playe
 
 ## Files on the server
 
-- `Data/scrit-cribbler/recordings/<world>/<date_time>-<session>/chunk-NNN/`: per-speaker `.ogg`, `mixed.ogg`, `transcript.json`, `notes.md`
+- `Data/scrit-cribbler/recordings/<world>/<date_time>-<session>/chunk-NNN/`: per-speaker `.ogg`, `mixed.ogg`, `transcript.json`, `transcript.raw.json` (before crosstalk removal), `notes.md`
 - `Data/scrit-cribbler/recaps/<world>-<date>-<session>.md`: recap plus transcript
 
 Foundry serves the whole `Data/` folder publicly, so the reverse proxy must block `/scrit-cribbler/`.
 
 ## Known limitations
 
-- Whisper `base` on CPU mis-hears names. The transcript keeps the misheard versions, and the recap may repeat them.
+- Whisper still mis-hears some words ("song" for "stall"). The transcript keeps them, and the recap may repeat them.
+- Speech recognition is given at most 40 campaign names: player characters, the tokens on the scene in view, and rare or unusually named items. A longer list made Whisper output the list instead of speech.
 - Speakers are labeled from their Foundry user and assigned character. Two people on one microphone share a label.
+- When one voice reaches two microphones (a player on speakers, or two mics in one room), the extra copy is removed. A copy that Whisper heard differently on each mic can survive.

@@ -74,35 +74,90 @@ function readNotes(session, index) {
 }
 
 const CROSSTALK_WINDOW_S = 2.0;   // other speaker's words must be this close in time
-const CROSSTALK_COVERAGE = 0.8;    // share of a line's words also said by the other speaker
-const CROSSTALK_QUIETER_DB = 6;    // bleed on a mic is much quieter than the speaker's own mic (~10 dB in tests)
+const CROSSTALK_COVERAGE = 0.6;    // share of a line's words also said by another speaker...
+const CROSSTALK_COVERAGE_SHORT = 0.8; // ...for lines up to 8 words ("I got a 17" vs "I got a 12" is not a copy)
+const CROSSTALK_SHORT_WORDS = 8;
+const CROSSTALK_QUIETER_DB = 6;    // bleed through speakers is much quieter than the speaker's own mic (~10 dB in tests)
+const OWNERSHIP_WINDOW_S = 30;     // for equally loud copies: who was actually talking around then
+const OWNERSHIP_MARGIN = 0.05;     // too close to call -> keep both
 
 const tokens = (t) => String(t).toLowerCase().match(/[a-z0-9']+/g) || [];
 
+/** Share of a line's words that other speakers said at the same time (multiset match). */
+function coverage(seg, segments) {
+  const own = tokens(seg.text);
+  const others = segments.filter((o) => o.speaker !== seg.speaker
+    && o.start <= seg.end + CROSSTALK_WINDOW_S && o.end >= seg.start - CROSSTALK_WINDOW_S);
+  if (!own.length || !others.length) return { covered: 0, own: own.length, others };
+  const bag = new Map();
+  for (const w of others.flatMap((o) => tokens(o.text))) bag.set(w, (bag.get(w) || 0) + 1);
+  let covered = 0;
+  for (const w of own) if (bag.get(w) > 0) { covered++; bag.set(w, bag.get(w) - 1); }
+  return { covered, own: own.length, others };
+}
+
+/** The clearest copy in the current set of lines, or null. */
+function clearestCopy(segments) {
+  const info = segments.map((seg) => ({ seg, ...coverage(seg, segments) }));
+  // Share of a speaker's words, around time t, that nobody else said at the same time.
+  const ownership = (speaker, t) => {
+    let total = 0, mine = 0;
+    for (const i of info) {
+      if (i.seg.speaker !== speaker || Math.abs(i.seg.start - t) > OWNERSHIP_WINDOW_S) continue;
+      total += i.own;
+      mine += i.own - i.covered;
+    }
+    return total ? mine / total : 0;
+  };
+  let best = null;
+  for (const { seg, covered, own, others } of info) {
+    if (!own || seg.level == null) continue;
+    if (covered / own < (own <= CROSSTALK_SHORT_WORDS ? CROSSTALK_COVERAGE_SHORT : CROSSTALK_COVERAGE)) continue;
+    // Compare with the other speaker's line that shares the most words (not just the loudest nearby).
+    const ownWords = new Set(tokens(seg.text));
+    const shared = (o) => tokens(o.text).filter((w) => ownWords.has(w)).length;
+    const leveled = others.filter((o) => o.level != null);
+    if (!leveled.length) continue;
+    const loudest = leveled.reduce((a, b) => (shared(b) > shared(a) || (shared(b) === shared(a) && b.level > a.level) ? b : a));
+    const louder = loudest.level - seg.level;
+    let score = 0, reason = null;
+    if (louder >= CROSSTALK_QUIETER_DB) {
+      score = 100 + louder;
+      reason = "quieter";
+    } else if (louder > -CROSSTALK_QUIETER_DB) {
+      const mine = ownership(seg.speaker, seg.start);
+      const theirs = ownership(loudest.speaker, seg.start);
+      if (theirs - mine >= OWNERSHIP_MARGIN) {
+        score = (theirs - mine) * 100;
+        reason = `same room (own words ${Math.round(mine * 100)}% vs ${Math.round(theirs * 100)}%)`;
+      }
+    }
+    if (reason && (!best || score > best.score)) best = { seg, loudest, score, reason };
+  }
+  return best;
+}
+
 /**
- * A player on speakers (no headphones) puts other voices into their own mic, so one line
- * shows up on two tracks. Whisper splits it differently on each track, so lines are not
- * compared one-to-one: a line is bleed when most of its words were said at the same time
- * by another speaker whose copy is clearly louder. A player's real speech is loud on their
- * own mic, so it never passes the loudness test even when the words overlap.
+ * One voice showing up on two tracks: a player on speakers (the GM's voice comes out and
+ * back into their mic), or two mics in one room. Whisper splits it differently on each
+ * track, so lines are not compared one-to-one: a line is a copy when most of its words were
+ * said at the same time by another speaker. Which copy goes:
+ *  - one clearly quieter (speaker bleed) -> the quiet one;
+ *  - equally loud (same room) -> the speaker who, in the surrounding half minute, said
+ *    little of their own; the person actually talking has plenty of words nobody else has.
+ * Copies are removed one at a time, clearest first, re-checking after each: once one copy
+ * is gone its twin is no longer a copy of anything, so both sides are never removed.
+ * A player's own speech has few words in common with anyone, so it is never a copy.
  */
 export function removeCrosstalk(segments) {
+  let kept = [...segments];
   const report = [];
-  const kept = segments.filter((seg) => {
-    const own = tokens(seg.text);
-    if (!own.length || seg.level == null) return true;
-    const others = segments.filter((o) => o.speaker !== seg.speaker && o.level != null
-      && o.start <= seg.end + CROSSTALK_WINDOW_S && o.end >= seg.start - CROSSTALK_WINDOW_S);
-    if (!others.length) return true;
-    const bag = new Map();
-    for (const w of others.flatMap((o) => tokens(o.text))) bag.set(w, (bag.get(w) || 0) + 1);
-    let covered = 0;
-    for (const w of own) if (bag.get(w) > 0) { covered++; bag.set(w, bag.get(w) - 1); }
-    const loudest = others.reduce((a, b) => (b.level > a.level ? b : a));
-    const isBleed = covered / own.length >= CROSSTALK_COVERAGE && loudest.level - seg.level >= CROSSTALK_QUIETER_DB;
-    if (isBleed) report.push({ t: hms(seg.start), removedFrom: seg.speaker, keptFor: loudest.speaker, text: seg.text, levels: [seg.level, loudest.level] });
-    return !isBleed;
-  });
+  for (let copy = clearestCopy(kept); copy; copy = clearestCopy(kept)) {
+    const { seg, loudest, reason } = copy;
+    kept = kept.filter((s) => s !== seg);
+    report.push({ t: hms(seg.start), removedFrom: seg.speaker, keptFor: loudest.speaker, text: seg.text, levels: [seg.level, loudest.level], reason });
+  }
+  report.sort((a, b) => a.t.localeCompare(b.t));
   return { segments: kept, removed: report };
 }
 
@@ -155,6 +210,8 @@ export class Pipeline {
         }
       }
       segments.sort((a, b) => a.start - b.start);
+      // Before crosstalk removal, so its decisions can be replayed and tuned offline.
+      fs.writeFileSync(path.join(dir, "transcript.raw.json"), JSON.stringify(segments, null, 2));
       const deduped = removeCrosstalk(segments);
       segments = deduped.segments;
       report.crosstalk = deduped.removed;
@@ -191,6 +248,8 @@ export class Pipeline {
         body: JSON.stringify({
           session_name: session.data.sessionName,
           vocab: session.data.vocab ?? [],
+          // So a character pulling out something they already had is not noted as found.
+          previous_recap: this.previousRecap(session)?.text ?? null,
           chunk: { index, start: hms(entry.startSec), transcript: segments.map((g) => `[${hms(g.start)}] ${g.speaker}: ${g.text}`).join("\n") }
         })
       });
@@ -259,7 +318,7 @@ export class Pipeline {
         d.recapStatus = "no-story";
         d.recapNote = "The chunk notes found no story events.";
       } else {
-        const previous = d.usePreviousRecap === false ? null : this.previousRecap(session);
+        const previous = this.previousRecap(session);
         d.previousRecapFrom = previous?.from ?? null;
         const t0 = Date.now();
         const res = await withRetry(session, "summarize", () =>

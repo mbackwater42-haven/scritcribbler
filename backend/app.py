@@ -133,6 +133,12 @@ NON_LATIN = re.compile(r"[^\u0000-ɏḀ-ỿ -⁯€™]")
 VAD = VadOptions(threshold=0.5, min_silence_duration_ms=600, speech_pad_ms=300, min_speech_duration_ms=150)
 JOIN_GAP_S = 0.5
 MAX_VOCAB_CHARS = 700  # hotwords share Whisper's ~224-token prompt budget
+# A long hotword list gets "heard" in quiet stretches ("Dagger, Dagger of Fire Resistance,
+# Horseshoe" in the 2026-09-27 test with ~300 terms sent). Callers send most important first.
+MAX_VOCAB_TERMS = 40
+# Lines quieter than this on their own track are room noise or far-off bleed, not speech
+# into that mic (own-mic speech measured -15 to -35 dBFS, bleed -33 to -48).
+MIN_LINE_DB = -55.0
 
 
 def speech_regions(audio):
@@ -192,7 +198,7 @@ def parse_vocab(raw):
         term = term.strip()
         if not term or term.lower() in seen:
             continue
-        if size + len(term) + 2 > MAX_VOCAB_CHARS:
+        if size + len(term) + 2 > MAX_VOCAB_CHARS or len(out) >= MAX_VOCAB_TERMS:
             break
         seen.add(term.lower())
         out.append(term)
@@ -242,7 +248,7 @@ def transcribe_chunk():
             )
             raw_segments = list(seg_iter)  # the generator does the work; keep it inside the lock
 
-        segments, dropped = [], {"phrase": 0, "confidence": 0, "repetition": 0, "script": 0}
+        segments, dropped = [], {"phrase": 0, "confidence": 0, "repetition": 0, "script": 0, "quiet": 0}
         for seg in raw_segments:
             if seg.no_speech_prob > 0.6 and seg.avg_logprob < -1.0:
                 dropped["confidence"] += 1
@@ -269,9 +275,10 @@ def transcribe_chunk():
                     dropped["phrase"] += 1
                 elif NON_LATIN.search(text):
                     dropped["script"] += 1
+                elif (level := level_db(audio, g["start"], g["end"])) < MIN_LINE_DB:
+                    dropped["quiet"] += 1
                 else:
-                    segments.append({"start": round(g["start"], 2), "end": round(g["end"], 2), "text": text,
-                                     "level": level_db(audio, g["start"], g["end"])})
+                    segments.append({"start": round(g["start"], 2), "end": round(g["end"], 2), "text": text, "level": level})
 
         segments.sort(key=lambda x: x["start"])
         logger.info(f"  {speaker}: kept {len(segments)}, dropped {dropped}")
@@ -333,10 +340,11 @@ def fit(text, budget_tokens):
     return text if len(text) <= max_chars else text[:max_chars] + "\n[... transcript truncated to fit ...]"
 
 
-def chunk_notes(session_name, chunk, vocab):
-    budget = OLLAMA_NUM_CTX - 1400  # room for instructions + answer
+def chunk_notes(session_name, chunk, vocab, background=None):
+    background = previously(background)
+    budget = OLLAMA_NUM_CTX - 1400 - approx_tokens(background)  # room for instructions + answer
     prompt = f"""You are taking notes on part of a tabletop RPG session recording ("{session_name}"), segment starting at {chunk['start']}.
-
+{background}
 {GROUNDING}{vocab_rule(vocab)}
 
 Transcript segment:
@@ -391,13 +399,14 @@ def is_no_story(notes_text):
 
 
 def previously(text):
-    """Last session's recap as background: spellings and open threads, not events of this session."""
+    """Story so far (GM's journal or last recap): spellings, open threads and what the party
+    already has. Never events of this session."""
     if not text:
         return ""
     return f"""
-Background, the recap of the PREVIOUS session (for name spellings and continuing open threads only; do NOT retell it and do NOT present anything from it as happening in this session):
+Background from EARLIER sessions (for name spellings, open threads, and what the characters already have or know). Do NOT retell it and do NOT present anything from it as happening in this session. Anything the characters already had is not something they gained now:
 <<<
-{text.strip()[:3000]}
+{text.strip()[:4000]}
 >>>
 """
 
@@ -449,7 +458,7 @@ def chunk_notes_route():
         return jsonify({"status": "success", "notes": "- (no story events)"})
     vocab = parse_vocab("\n".join(body.get("vocab") or []))
     logger.info(f"Notes for '{body.get('session_name', 'Session')}' chunk {chunk.get('index')} ({approx_tokens(chunk['transcript'])} tokens)")
-    return jsonify({"status": "success", "notes": chunk_notes(body.get("session_name", "Session"), chunk, vocab)})
+    return jsonify({"status": "success", "notes": chunk_notes(body.get("session_name", "Session"), chunk, vocab, body.get("previous_recap"))})
 
 
 @app.route("/summarize", methods=["POST"])
@@ -468,7 +477,7 @@ def summarize():
             chunk_text = c["notes"]
         else:
             logger.info(f"  notes for chunk {c.get('index')} ({approx_tokens(c['transcript'])} tokens)")
-            chunk_text = chunk_notes(name, c, vocab)
+            chunk_text = chunk_notes(name, c, vocab, meta.get("previous_recap"))
         notes.append(f"[{c.get('start', '?')}]\n{chunk_text}")
 
     # Condense in groups until the notes fit comfortably in one final prompt.

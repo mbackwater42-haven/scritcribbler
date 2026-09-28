@@ -32,6 +32,16 @@ Hooks.once("init", () => {
     default: true
   });
 
+  game.settings.register(MODULE_NAME, "story-journal", {
+    name: "Story-so-far journal",
+    hint: "Journal entry where you keep the campaign background: who the characters are, what they already carry, open threads. If it exists, the summarizer gets it as context (in place of the previous recap), so things the party already had are not reported as new. Players never see it through this module.",
+    scope: "world",
+    config: true,
+    restricted: true,
+    type: String,
+    default: "Story So Far"
+  });
+
   game.settings.register(MODULE_NAME, "journal-name", {
     name: "Recap journal",
     hint: "Journal entry that recaps are added to. Created (visible to players) if it does not exist.",

@@ -9,8 +9,11 @@ import { Pipeline, processingReport } from "./pipeline.mjs";
 
 const store = new SessionStore();
 const pipeline = new Pipeline({
-  // Most recent earlier recap in the same world that passed the grounding check.
+  // The GM's story-so-far journal if they keep one, else the most recent earlier recap in
+  // the same world that passed the grounding check.
   previousRecap: (session) => {
+    if (session.data.storySoFar) return { from: "Story-so-far journal", text: session.data.storySoFar };
+    if (session.data.usePreviousRecap === false) return null;
     const prev = store
       .list(session.data.world)
       .find((s) => s.data.startedAt < session.data.startedAt && s.data.state === "done" && s.data.recapStatus === "ok" && s.data.summary);
@@ -18,6 +21,8 @@ const pipeline = new Pipeline({
   }
 });
 let active = null; // { session, recording }
+
+const storyText = (t) => (typeof t === "string" && t.trim() ? t.trim().slice(0, 4000) : null);
 
 function startProcessing(session) {
   for (const c of session.data.chunks) if (c.status === "recorded") pipeline.chunk(session, c.index);
@@ -106,6 +111,7 @@ const routes = [
       vocab: b.vocab
     });
     session.data.usePreviousRecap = b.usePreviousRecap !== false;
+    session.data.storySoFar = storyText(b.storySoFar);
     store.add(session);
     const recording = new LiveRecording(session, {
       onChunkReady: (s, index) => pipeline.chunk(s, index),
@@ -156,10 +162,11 @@ const routes = [
         }
       }
     }
-    // Fresh campaign names from the GM client: sessions recorded before 1.2 have none, and
-    // the party's gear may have changed since.
-    if (Array.isArray(b.vocab)) s.data.vocab = cleanVocab(b.vocab, s.data.vocab ?? []);
+    // Fresh campaign names from the GM client replace the stored ones: sessions recorded
+    // before 1.2 have none, and before 1.4 the list was long enough to make Whisper "hear" it.
+    if (Array.isArray(b.vocab)) s.data.vocab = cleanVocab(b.vocab);
     if (typeof b.usePreviousRecap === "boolean") s.data.usePreviousRecap = b.usePreviousRecap;
+    if ("storySoFar" in b) s.data.storySoFar = storyText(b.storySoFar);
     for (const c of s.data.chunks) delete c.report;
     Object.assign(s.data, { state: "processing", error: null, posted: false, dismissed: false, processingStartedAt: new Date().toISOString() });
     s.addLog("reprocess requested");

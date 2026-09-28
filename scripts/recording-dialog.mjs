@@ -1,4 +1,4 @@
-import { MODULE_NAME, api, campaignVocab, currentRoom, roster, postRecap } from "./recorder-api.mjs";
+import { MODULE_NAME, api, campaignVocab, currentRoom, roster, postRecap, storySoFar } from "./recorder-api.mjs";
 
 const { ApplicationV2, HandlebarsApplicationMixin, DialogV2 } = foundry.applications.api;
 
@@ -155,6 +155,7 @@ export class RecordingDialog extends HandlebarsApplicationMixin(ApplicationV2) {
           sessionName,
           roster: roster(),
           vocab: campaignVocab(),
+          storySoFar: storySoFar(),
           usePreviousRecap: game.settings.get(MODULE_NAME, "use-previous-recap")
         }
       });
@@ -203,7 +204,7 @@ export class RecordingDialog extends HandlebarsApplicationMixin(ApplicationV2) {
     // Fresh vocabulary: older sessions have none, and the party's gear may have changed.
     await this.#withBusy(() => api(`/sessions/${target.dataset.sessionId}/reprocess`, {
       method: "POST",
-      body: { vocab: campaignVocab(), usePreviousRecap: game.settings.get(MODULE_NAME, "use-previous-recap") }
+      body: { vocab: campaignVocab(), storySoFar: storySoFar(), usePreviousRecap: game.settings.get(MODULE_NAME, "use-previous-recap") }
     }));
   }
 }

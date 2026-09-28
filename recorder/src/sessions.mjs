@@ -14,15 +14,19 @@ export const localDate = (d) =>
  * has written the recap into the world's journal.
  */
 /** Campaign names from the GM client: strings only, de-duplicated, bounded. */
+/**
+ * Merge a fresh vocab list into the session's. The fresh list goes first (current scene,
+ * current party): the backend only uses the first ~40 terms, most important first.
+ */
 export function cleanVocab(list, existing = []) {
-  const out = [...existing];
-  const seen = new Set(out.map((t) => t.toLowerCase()));
-  for (const raw of Array.isArray(list) ? list : []) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of [...(Array.isArray(list) ? list : []), ...existing]) {
     const t = String(raw ?? "").replace(/\s+/g, " ").trim().slice(0, 60);
     if (t.length < 3 || seen.has(t.toLowerCase())) continue;
     seen.add(t.toLowerCase());
     out.push(t);
-    if (out.length >= 300) break;
+    if (out.length >= 80) break;
   }
   return out;
 }

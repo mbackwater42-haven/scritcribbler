@@ -38,41 +38,84 @@ export function roster() {
 
 /**
  * Campaign names that speech recognition would otherwise mis-hear ("Talon" -> "talent",
- * "Knight" -> "night"). Most important first: the backend keeps only the first ~700 chars.
- * Only things the table is likely to say this session: player characters, what they carry
- * or cast, and the scene(s) in view. Not every actor in the world: that would let the
- * summarizer "correct" words into names nobody said.
+ * "Knight" -> "night"). Whisper gets these as hotwords, and a long list backfires: in
+ * quiet stretches it "hears" the list itself ("Dagger, Dagger of Fire Resistance...").
+ * So only unusual names, most important first, capped: player characters, the scene(s)
+ * in view, then rare or oddly named items and spells. Plain-English names ("Potion of
+ * Speed", "Longsword +1", every cleric spell) are left out; Whisper spells those fine.
  */
+const VOCAB_MAX = { scene: 15, items: 10, total: 40 };
+const DISTINCT_RARITY = new Set(["rare", "veryrare", "legendary", "artifact"]);
+
+/** "Shield (Legacy)" -> "Shield", "Dagger, +1" / "Longsword +1" -> base name. */
+function plainName(name) {
+  return String(name ?? "").replace(/\s*\(legacy\)\s*$/i, "").replace(/,?\s*\+\d+\s*$/, "").replace(/\s+/g, " ").trim();
+}
+
 export function campaignVocab() {
   const terms = [];
+  const seen = new Set();
   const add = (name) => {
-    const n = String(name ?? "").replace(/\s+/g, " ").trim();
-    if (n.length >= 3 && n.length <= 40) terms.push(n);
+    const n = plainName(name);
+    if (n.length < 3 || n.length > 40 || seen.has(n.toLowerCase())) return false;
+    seen.add(n.toLowerCase());
+    terms.push(n);
+    return true;
   };
   const characters = game.users.filter((u) => !u.isGM && u.character).map((u) => u.character);
+  for (const actor of characters) {
+    // 'Zeal "Hat Trick" Paris (Zee)' -> "Zeal Paris", "Zeal", "Hat Trick", "Zee"
+    const nicknames = [...actor.name.matchAll(/"([^"]+)"|\(([^)]+)\)/g)].map((m) => m[1] ?? m[2]);
+    const full = actor.name.replace(/"[^"]*"|\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
+    add(full);
+    add(full.split(" ")[0]);
+    nicknames.forEach(add);
+  }
 
-  for (const actor of characters) {
-    add(actor.name);
-    add(actor.name.split(" ")[0]);
-  }
+  // Tokens on the scene(s) in view: NPCs and monsters the table is about to name.
+  // "Goblin 3" -> "Goblin"; player characters are already in.
+  let sceneTerms = 0;
   for (const scene of new Set([game.scenes.viewed, game.scenes.active].filter(Boolean))) {
-    for (const token of scene.tokens) add(token.name);
-    add(scene.navName || scene.name);
-  }
-  const itemsByPriority = { weapon: [], magic: [], spell: [], feat: [] };
-  for (const actor of characters) {
-    for (const item of actor.items) {
-      const rarity = String(item.system?.rarity ?? "").toLowerCase();
-      if (item.type === "weapon") itemsByPriority.weapon.push(item.name);
-      else if (["equipment", "consumable", "loot", "container", "tool"].includes(item.type) && rarity && rarity !== "common") itemsByPriority.magic.push(item.name);
-      else if (item.type === "spell") itemsByPriority.spell.push(item.name);
-      else if (item.type === "feat") itemsByPriority.feat.push(item.name);
+    if (sceneTerms < VOCAB_MAX.scene && add(scene.navName || scene.name)) sceneTerms++;
+    for (const token of scene.tokens) {
+      if (sceneTerms >= VOCAB_MAX.scene) break;
+      if (token.actor?.type === "character") continue;
+      if (add(token.name.replace(/\s*\d+$/, ""))) sceneTerms++;
     }
   }
-  Object.values(itemsByPriority).flat().forEach(add);
 
-  const seen = new Set();
-  return terms.filter((t) => !seen.has(t.toLowerCase()) && seen.add(t.toLowerCase()));
+  // Named things only: rare+ gear (not potions or scrolls), or an apostrophe ("Aganazzar's Shocker", "Zee's Jester's Mask").
+  let itemTerms = 0;
+  for (const actor of characters) {
+    for (const item of actor.items) {
+      if (itemTerms >= VOCAB_MAX.items) break;
+      const rarity = String(item.system?.rarity ?? "").toLowerCase().replace(/\s/g, "");
+      const named = /['’]/.test(item.name);
+      const wanted = ["spell", "consumable"].includes(item.type) ? named : item.type !== "feat" && (named || DISTINCT_RARITY.has(rarity));
+      if (wanted && add(item.name)) itemTerms++;
+    }
+  }
+  return terms.slice(0, VOCAB_MAX.total);
+}
+
+const STORY_MAX_CHARS = 4000;
+
+/**
+ * Plain text of the GM's story-so-far journal, or null if it does not exist or is empty.
+ * DOMParser does not run scripts or load images, unlike innerHTML.
+ */
+export function storySoFar() {
+  const entry = game.journal.getName(game.settings.get(MODULE_NAME, "story-journal") || "");
+  if (!entry) return null;
+  const text = entry.pages.contents
+    .filter((p) => p.type === "text")
+    .sort((a, b) => a.sort - b.sort)
+    .map((p) => `${p.name}\n${new DOMParser().parseFromString(p.text?.content ?? "", "text/html").body.textContent}`)
+    .join("\n\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return text ? text.slice(0, STORY_MAX_CHARS) : null;
 }
 
 /** While recording, send the names from each newly viewed scene (GM changed scenes mid-session). */
@@ -194,13 +237,13 @@ function reportHtml(report) {
   const rows = report.chunks.map((c) => {
     const dropped = Object.entries(c.dropped || {}).filter(([, n]) => n).map(([k, n]) => `${esc(k)} ${n}`).join(", ") || "none";
     const cross = (c.crosstalk || []).map((x) =>
-      `<li><em>${esc(x.t)}</em> removed from ${esc(x.removedFrom)} (kept for ${esc(x.keptFor)}): “${esc(x.text)}”</li>`).join("");
+      `<li><em>${esc(x.t)}</em> removed from ${esc(x.removedFrom)} (kept for ${esc(x.keptFor)}${x.reason ? `; ${esc(x.reason)}` : ""}): “${esc(x.text)}”</li>`).join("");
     return `<tr><td>${c.index}</td><td>${esc(c.status)}</td><td>${c.speakers ?? "–"}</td><td>${secs(c.transcribeSec)}</td><td>${secs(c.notesSec)}</td><td>${dropped}</td><td>${(c.crosstalk || []).length}</td></tr>`
       + (cross ? `<tr><td></td><td colspan="6"><ul>${cross}</ul></td></tr>` : "");
   }).join("");
   return `<h2>Processing report</h2>
 <p><strong>Models:</strong> Whisper ${esc(report.models?.whisper ?? "?")}, summary ${esc(report.models?.ollama ?? "?")} · <strong>Stop → recap:</strong> ${secs(report.stopToRecapSec)} (summary ${secs(report.summarizeSec)}) · <strong>Status:</strong> ${esc(report.recapStatus ?? "?")}</p>
-<p><strong>Previous recap used:</strong> ${esc(report.previousRecapFrom ?? "none")}</p>
+<p><strong>Background context:</strong> ${esc(report.previousRecapFrom ?? "none")}</p>
 <p><strong>Vocabulary (${report.vocab.length}):</strong> ${esc(report.vocab.join(", ") || "none")}</p>
 <table><thead><tr><th>Chunk</th><th>Status</th><th>Speakers</th><th>Transcribe</th><th>Notes</th><th>Filtered lines</th><th>Crosstalk</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
