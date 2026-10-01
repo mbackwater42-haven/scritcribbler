@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<!--AVJOIN-BASE-->
+<title>Voice Chat</title>
+<style>
+  :root { color-scheme: dark; --bg:#16161a; --card:#24242b; --fg:#eee; --muted:#999; --on:#2e9e5b; --off:#b8393a; --speak:#4fc3f7; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px system-ui, sans-serif; display:flex; flex-direction:column; height:100vh; }
+  header { padding:12px 16px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; border-bottom:1px solid #333; }
+  #status { flex:1; color:var(--muted); min-width:200px; }
+  button, select { font:inherit; border-radius:8px; border:0; padding:10px 16px; cursor:pointer; background:#3a3a44; color:var(--fg); }
+  button.on { background:var(--on); } button.off { background:var(--off); }
+  select { max-width:240px; }
+  #grid { flex:1; padding:16px; display:grid; gap:12px; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); align-content:start; overflow:auto; }
+  .tile { background:var(--card); border-radius:10px; aspect-ratio:4/3; position:relative; overflow:hidden; border:3px solid transparent; display:flex; align-items:center; justify-content:center; }
+  .tile.speaking { border-color:var(--speak); }
+  .tile video { width:100%; height:100%; object-fit:cover; }
+  .tile .initial { font-size:48px; color:var(--muted); }
+  .tile .label { position:absolute; left:8px; bottom:8px; background:#000a; padding:4px 8px; border-radius:6px; font-size:14px; }
+  #banner { display:none; padding:16px; text-align:center; background:#5a4a12; }
+  #banner button { font-size:1.2em; padding:14px 28px; background:var(--on); }
+</style>
+</head>
+<body>
+<div id="banner"><span id="bannerText"></span> <button id="bannerBtn" hidden></button></div>
+<header>
+  <span id="status">Connecting…</span>
+  <button id="micBtn" disabled>Mic</button>
+  <button id="camBtn" disabled>Camera</button>
+  <select id="micSel" title="Microphone"></select>
+  <button id="leaveBtn" disabled>Leave</button>
+</header>
+<div id="grid"></div>
+
+<!--AVJOIN-CONFIG-->
+<script src="vendor/livekit-client.umd.js"></script>
+<script>
+(() => {
+  const { Room, RoomEvent, Track } = LivekitClient;
+  const $ = (id) => document.getElementById(id);
+  // Injected by avautojoin.js when it writes this page into the A/V tab.
+  const { liveKitUrl, token, room: roomName } = window.AVJOIN || {};
+  window.avRoom = roomName;
+  window.avConnected = false;
+
+  const setStatus = (t) => { $("status").textContent = t; };
+  const banner = (text, btnLabel, onClick) => {
+    $("banner").style.display = text ? "block" : "none";
+    $("bannerText").textContent = text || "";
+    $("bannerBtn").hidden = !btnLabel;
+    if (btnLabel) { $("bannerBtn").textContent = btnLabel; $("bannerBtn").onclick = onClick; }
+  };
+
+  if (!/^wss:\/\/[^/\s]+/.test(liveKitUrl || "")) {
+    setStatus("Voice server address is not set. Ask the GM to check Audio/Video settings, then reload the Foundry game page.");
+    return;
+  }
+  if (!token) {
+    setStatus("Missing connection info. Reload the Foundry game page to rejoin.");
+    return;
+  }
+
+  const room = new Room({ adaptiveStream: true, dynacast: true });
+  window.avLeave = () => room.disconnect();
+  const tiles = new Map(); // identity -> element
+  const audioBox = document.createElement("div");
+  audioBox.hidden = true;
+  document.body.appendChild(audioBox);
+
+  function tileFor(p) {
+    let t = tiles.get(p.identity);
+    if (!t) {
+      t = document.createElement("div");
+      t.className = "tile";
+      const name = p.name || p.identity;
+      t.innerHTML = `<span class="initial"></span><span class="label"></span>`;
+      t.querySelector(".initial").textContent = name.charAt(0).toUpperCase();
+      t.querySelector(".label").textContent = p.isLocal ? `${name} (you)` : name;
+      tiles.set(p.identity, t);
+      if (p.isLocal) $("grid").prepend(t); else $("grid").appendChild(t);
+    }
+    return t;
+  }
+
+  function renderVideo(p) {
+    const t = tileFor(p);
+    t.querySelector("video")?.remove();
+    const pub = p.getTrackPublication(Track.Source.Camera);
+    const track = pub?.track;
+    const on = track && !pub.isMuted;
+    t.querySelector(".initial").hidden = !!on;
+    if (on) {
+      const v = track.attach();
+      v.muted = true;
+      t.prepend(v);
+    }
+  }
+
+  function removeParticipant(p) {
+    tiles.get(p.identity)?.remove();
+    tiles.delete(p.identity);
+  }
+
+  function updateButtons() {
+    const lp = room.localParticipant;
+    const mic = lp.isMicrophoneEnabled, cam = lp.isCameraEnabled;
+    $("micBtn").textContent = mic ? "🎤 Mic on" : "🔇 Mic off";
+    $("micBtn").className = mic ? "on" : "off";
+    $("camBtn").textContent = cam ? "📷 Camera on" : "📷 Camera off";
+    $("camBtn").className = cam ? "on" : "off";
+  }
+
+  async function fillMicList() {
+    try {
+      const devs = await Room.getLocalDevices("audioinput");
+      const cur = room.getActiveDevice("audioinput");
+      $("micSel").innerHTML = "";
+      for (const d of devs) {
+        const o = new Option(d.label || "Microphone", d.deviceId, false, d.deviceId === cur);
+        $("micSel").add(o);
+      }
+    } catch (e) { console.warn(e); }
+  }
+
+  function checkAudioPlayback() {
+    if (room.canPlaybackAudio) banner("");
+    else banner("Your browser paused incoming sound.", "🔊 Click to hear everyone", () => room.startAudio());
+  }
+
+  room
+    .on(RoomEvent.ParticipantConnected, (p) => renderVideo(p))
+    .on(RoomEvent.ParticipantDisconnected, removeParticipant)
+    .on(RoomEvent.TrackSubscribed, (track, _pub, p) => {
+      if (track.kind === Track.Kind.Audio) audioBox.appendChild(track.attach());
+      else renderVideo(p);
+    })
+    .on(RoomEvent.TrackUnsubscribed, (track, _pub, p) => {
+      track.detach().forEach((el) => el.remove());
+      if (track.kind === Track.Kind.Video) renderVideo(p);
+    })
+    .on(RoomEvent.TrackMuted, (_pub, p) => { renderVideo(p); updateButtons(); })
+    .on(RoomEvent.TrackUnmuted, (_pub, p) => { renderVideo(p); updateButtons(); })
+    .on(RoomEvent.LocalTrackPublished, () => { renderVideo(room.localParticipant); updateButtons(); })
+    .on(RoomEvent.LocalTrackUnpublished, () => { renderVideo(room.localParticipant); updateButtons(); })
+    .on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
+      const ids = new Set(speakers.map((s) => s.identity));
+      for (const [id, t] of tiles) t.classList.toggle("speaking", ids.has(id));
+    })
+    .on(RoomEvent.AudioPlaybackStatusChanged, checkAudioPlayback)
+    .on(RoomEvent.MediaDevicesChanged, fillMicList)
+    .on(RoomEvent.Reconnecting, () => setStatus("Connection lost, reconnecting…"))
+    .on(RoomEvent.Reconnected, () => setStatus("Connected"))
+    .on(RoomEvent.Disconnected, () => {
+      window.avConnected = false;
+      setStatus("Disconnected. Rejoin from Foundry (reload the game page) to reconnect.");
+      ["micBtn", "camBtn", "leaveBtn"].forEach((b) => ($(b).disabled = true));
+    });
+
+  $("micBtn").onclick = async () => {
+    await room.localParticipant.setMicrophoneEnabled(!room.localParticipant.isMicrophoneEnabled).catch(mediaError);
+    updateButtons();
+  };
+  $("camBtn").onclick = async () => {
+    await room.localParticipant.setCameraEnabled(!room.localParticipant.isCameraEnabled).catch(mediaError);
+    updateButtons();
+  };
+  $("micSel").onchange = (e) => room.switchActiveDevice("audioinput", e.target.value).catch(console.warn);
+  $("leaveBtn").onclick = () => room.disconnect();
+
+  function mediaError(e) {
+    console.error(e);
+    if (e?.name === "NotAllowedError")
+      banner("Microphone/camera blocked. Click the camera icon in the address bar, choose Allow, then click the Mic button.");
+    else banner(`Could not start device: ${e?.message || e}`);
+  }
+
+  (async () => {
+    try {
+      await room.connect(liveKitUrl, token, { autoSubscribe: true });
+    } catch (e) {
+      console.error(e);
+      setStatus("Could not connect to voice server. Reload the Foundry game page to try again.");
+      return;
+    }
+    window.avConnected = true;
+    setStatus(`Connected to voice chat`);
+    ["micBtn", "camBtn", "leaveBtn"].forEach((b) => ($(b).disabled = false));
+    renderVideo(room.localParticipant);
+    for (const p of room.remoteParticipants.values()) renderVideo(p);
+    // Mic on, camera off.
+    await room.localParticipant.setMicrophoneEnabled(true).catch(mediaError);
+    updateButtons();
+    fillMicList();
+    checkAudioPlayback();
+  })();
+
+  window.addEventListener("beforeunload", () => room.disconnect());
+})();
+</script>
+</body>
+</html>

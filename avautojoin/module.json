@@ -1,0 +1,12 @@
+{
+  "id": "avautojoin",
+  "title": "A/V Auto-Join",
+  "description": "Companion to LiveKit AVClient. Players automatically open A/V in a separate tab (mic on, camera off) with no confirmation dialog.",
+  "version": "1.2.0",
+  "authors": [{ "name": "mbackwater42" }],
+  "compatibility": { "minimum": "13", "verified": "14" },
+  "relationships": {
+    "requires": [{ "id": "avclient-livekit", "type": "module" }]
+  },
+  "esmodules": ["avautojoin.js"]
+}

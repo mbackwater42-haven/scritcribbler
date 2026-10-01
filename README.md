@@ -11,6 +11,7 @@ The Foundry **server** records every voice in the LiveKit A/V room (GM and playe
 | This module | Foundry (GM browser) | Start/Stop panel, progress, posts finished recaps to the journal |
 | `scrit-recorder` | Foundry server (Node, PM2) | Joins the LiveKit room as a hidden listener, writes per-speaker audio in 10-min chunks, runs the processing queue, writes the `.md` recap |
 | Backend | LAN workstation (Python, Whisper + Ollama) | `/transcribe-chunk`, `/chunk-notes`, `/summarize` over HTTPS with a bearer token |
+| `avautojoin` (optional) | Foundry (players' browsers) + `scrit-recorder` | Players join A/V in a separate tab with the mic on and the camera off, using LiveKit tokens issued by the recorder so the API secret never reaches browsers. See [`avautojoin/`](avautojoin/README.md) |
 
 ## Requirements
 
@@ -25,6 +26,10 @@ The Foundry **server** records every voice in the LiveKit A/V room (GM and playe
 2. As GM: **Configure Settings → Scrit Cribbler → Recorder token**, and paste `SCRIT_API_TOKEN` from the recorder's `.env`. The token is stored only in that browser.
 3. Optional: change **Recap journal** (default `Session Recaps`).
 4. Recommended: keep a GM-only journal entry named **Story So Far** (name set in settings). Write who the characters are, what they already carry, and the open threads. The summarizer reads it as background, so the recap does not report as new something a character already had. Without it, the previous recap from this world is used instead.
+
+## Optional: A/V Auto-Join and player tokens
+
+[`avautojoin/`](avautojoin/README.md) is a small second Foundry module for non-technical players. It opens A/V in a separate tab with the mic on and the camera off, with no dialog. It also adds a LiveKit server type, **Foundry server (secure)**, whose tokens come from the recorder's `POST /livekit/token` (public at `/scrit/livekit/token`). The recorder checks the caller's Foundry session cookie with Foundry itself, so the LiveKit API secret stays in the recorder's `.env` and is not in world settings. The route is rate-limited and checks `Origin`.
 
 ## Usage
 
