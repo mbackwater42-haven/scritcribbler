@@ -7,6 +7,7 @@ import { LiveRecording, recoverChunkDir } from "./recorder.mjs";
 import { Session, SessionStore, cleanVocab } from "./sessions.mjs";
 import { Pipeline, processingReport } from "./pipeline.mjs";
 import { deleteAudio, deleteSession, freeBytes, removeSpeaker, scheduleSweep } from "./retention.mjs";
+import { tokenRoute } from "./livekittoken.mjs";
 
 const store = new SessionStore();
 const pipeline = new Pipeline({
@@ -90,6 +91,9 @@ async function readJson(req) {
 
 const routes = [
   ["GET", /^\/health$/, false, () => [200, { ok: true, recording: active?.session.summary() ?? null }]],
+
+  // LiveKit token for a logged-in Foundry user (auth = Foundry session cookie, not the API token).
+  ["POST", /^\/livekit\/token$/, false, async (req) => tokenRoute(req, await readJson(req))],
 
   // Retention policy and disk space, for the panel and the "recording started" notice.
   ["GET", /^\/storage$/, true, () => [200, {

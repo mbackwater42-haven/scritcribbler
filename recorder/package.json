@@ -14,6 +14,7 @@
   "dependencies": {
     "@livekit/rtc-node": "^1.1.0",
     "livekit-server-sdk": "^2.19.1",
+    "socket.io-client": "^4.8.4",
     "undici": "^7.29.1"
   }
 }

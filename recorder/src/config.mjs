@@ -31,6 +31,10 @@ export const config = {
   livekitKey: req("LIVEKIT_API_KEY"),
   livekitSecret: req("LIVEKIT_API_SECRET"),
   botIdentity: process.env.BOT_IDENTITY || "scrit-cribbler-recorder",
+  // Player LiveKit tokens: Foundry is asked who a session cookie belongs to.
+  foundryUrl: process.env.FOUNDRY_URL || "http://127.0.0.1:30000",
+  // Allowed browser Origin for /livekit/token (default: https://<Host header>).
+  foundryOrigin: process.env.FOUNDRY_ORIGIN || "",
 
   recordingsDir: process.env.RECORDINGS_DIR || "/mnt/foundryvtt/data/Data/scrit-cribbler/recordings",
   recapsDir: process.env.RECAPS_DIR || "/mnt/foundryvtt/data/Data/scrit-cribbler/recaps",
