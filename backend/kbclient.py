@@ -228,6 +228,8 @@ def reliability(c):
         return "character sheet"
     if f.startswith("gm_"):
         return "GM notes"
+    if f.startswith("scrit_"):
+        return "Session recap (machine-written from audio, GM-editable; names may be misspelled)"
     if f.startswith("recap_"):
         return "Discord recap (machine-written from audio; names may be misspelled)"
     if f.startswith("prep_"):
