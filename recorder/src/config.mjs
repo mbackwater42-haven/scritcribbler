@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseIds, parseWorlds } from "./kbproxy.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -35,6 +36,12 @@ export const config = {
   foundryUrl: process.env.FOUNDRY_URL || "http://127.0.0.1:30000",
   // Allowed browser Origin for /livekit/token (default: https://<Host header>).
   foundryOrigin: process.env.FOUNDRY_ORIGIN || "",
+
+  // GM lore Q&A (POST /kb/ask). Disabled unless BOTH are set. KB_GM_USER_IDS: comma-separated Foundry user ids
+  // allowed to ask (the Gamemaster). KB_WORLDS: "world-id:campaign,..." maps a Foundry world to a knowledge base
+  // folder name on the workstation, so the browser never chooses the folder.
+  kbGmUserIds: parseIds(process.env.KB_GM_USER_IDS),
+  kbWorlds: parseWorlds(process.env.KB_WORLDS),
 
   recordingsDir: process.env.RECORDINGS_DIR || "/mnt/foundryvtt/data/Data/scrit-cribbler/recordings",
   recapsDir: process.env.RECAPS_DIR || "/mnt/foundryvtt/data/Data/scrit-cribbler/recaps",

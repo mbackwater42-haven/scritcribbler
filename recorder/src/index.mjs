@@ -7,7 +7,9 @@ import { LiveRecording, recoverChunkDir } from "./recorder.mjs";
 import { Session, SessionStore, cleanVocab } from "./sessions.mjs";
 import { Pipeline, processingReport } from "./pipeline.mjs";
 import { deleteAudio, deleteSession, freeBytes, removeSpeaker, scheduleSweep } from "./retention.mjs";
-import { tokenRoute } from "./livekittoken.mjs";
+import { foundryUserId, tokenRoute } from "./livekittoken.mjs";
+import { MAX_BODY as KB_MAX_BODY, createKbRoute } from "./kbproxy.mjs";
+import { Agent, fetch as undiciFetch } from "undici";
 
 const store = new SessionStore();
 const pipeline = new Pipeline({
@@ -79,21 +81,49 @@ function send(res, code, body) {
   res.end(JSON.stringify(body));
 }
 
-async function readJson(req) {
+async function readJson(req, maxBytes = 256 * 1024) {
   let raw = "";
+  let bytes = 0;
   for await (const part of req) {
+    bytes += part.length;
     raw += part;
-    if (raw.length > 256 * 1024) throw Object.assign(new Error("body too large"), { code: 413 });
+    if (bytes > maxBytes) throw Object.assign(new Error("body too large"), { code: 413 });
   }
   if (!raw) return {};
   try { return JSON.parse(raw); } catch { throw Object.assign(new Error("invalid JSON"), { code: 400 }); }
 }
+
+// GM lore Q&A: the browser asks here, the workstation backend holds the knowledge base (see kbproxy.mjs).
+const kbDispatcher = new Agent({
+  headersTimeout: 210 * 1000, // nginx gives /scrit/kb/ask 240 s; a first answer after a model swap can take ~75 s
+  bodyTimeout: 210 * 1000,
+  connect: config.backendCa ? { ca: fs.readFileSync(config.backendCa) } : {}
+});
+const kb = createKbRoute({
+  apiToken: config.apiToken,
+  gmUserIds: config.kbGmUserIds,
+  worlds: config.kbWorlds,
+  foundryOrigin: config.foundryOrigin,
+  foundryUserId,
+  callBackend: async (body) => {
+    const res = await undiciFetch(`${config.backendUrl}/kb/ask`, {
+      method: "POST",
+      dispatcher: kbDispatcher,
+      headers: { Authorization: `Bearer ${config.backendToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    return { status: res.status, body: await res.json().catch(() => ({})) };
+  }
+});
 
 const routes = [
   ["GET", /^\/health$/, false, () => [200, { ok: true, recording: active?.session.summary() ?? null }]],
 
   // LiveKit token for a logged-in Foundry user (auth = Foundry session cookie, not the API token).
   ["POST", /^\/livekit\/token$/, false, async (req) => tokenRoute(req, await readJson(req))],
+
+  // GM lore Q&A. Auth is done inside (Origin, rate limit, API token, GM-only Foundry login), in that order.
+  ["POST", /^\/kb\/ask$/, false, (req) => kb(req, () => readJson(req, KB_MAX_BODY))],
 
   // Retention policy and disk space, for the panel and the "recording started" notice.
   ["GET", /^\/storage$/, true, () => [200, {
