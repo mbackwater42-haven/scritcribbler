@@ -166,9 +166,17 @@
 .scrit-cribbler-dialog .sc-actions .sc-delete { color: var(--color-level-error, #c33); }
 
 /* Ask the campaign KB (GM-only lore lookups). Reuses the .sc-field / .sc-card / .sc-warning rules above. */
+/* The window body must scroll when answers and sources are taller than the window (Foundry's own rule
+   does not for this flex layout). The content block keeps its natural height instead of shrinking. */
+.scrit-cribbler-kb .window-content {
+  overflow-y: auto;
+  min-height: 0;
+}
+
 .scrit-cribbler-kb .sc-kb {
   display: flex;
   flex-direction: column;
+  flex: 0 0 auto;
   gap: 0.5rem;
 }
 
