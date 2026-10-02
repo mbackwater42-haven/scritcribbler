@@ -17,6 +17,10 @@ transcript for summarizing.
   POST /summarize         auth  JSON: { session_name, duration_seconds, speakers, vocab?, previous_recap?, model?,
                                         chunks: [{index, start, transcript, notes?}] }
                           -> { status, summary (markdown) | "NO_STORY", model }
+  GET  /kb/campaigns      auth  campaign knowledge bases available (only when CAMPAIGNKB_DIR is set)
+  POST /kb/ask            auth  JSON: { campaign, question (<=500 chars), audience? ("gm"|"players"), k?, answer? }
+                          -> { status, answer, model, sources: [{n, file, heading, reliability, cited, text}], seconds }
+                          503 {status:"busy"} while a recap holds the GPU. GM lore Q&A: see kbclient.py.
 """
 import hmac
 import logging
@@ -35,6 +39,8 @@ from dotenv import load_dotenv
 from faster_whisper import WhisperModel, decode_audio
 from faster_whisper.vad import VadOptions, get_speech_timestamps
 from flask import Flask, jsonify, request
+
+import kbclient
 
 load_dotenv()
 
@@ -59,6 +65,9 @@ if not BACKEND_TOKEN:
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("scrit-backend")
+
+# Campaign knowledge base (GM Q&A). Data lives outside the repo in CAMPAIGNKB_DIR; unset = feature off.
+KB_CFG = kbclient.config_from_env(os.environ, OLLAMA_API_URL)
 
 # Whisper and Ollama share one machine; never run two jobs at once.
 gpu_lock = threading.Lock()
@@ -521,11 +530,26 @@ def summarize():
     return jsonify({"status": "success", "summary": recap, "model": model})
 
 
+@app.route("/kb/campaigns", methods=["GET"])
+def kb_campaigns():
+    if not KB_CFG:
+        return jsonify({"status": "error", "error": "knowledge base not enabled"}), 404
+    return jsonify({"status": "success", "campaigns": kbclient.list_campaigns(KB_CFG)})
+
+
+@app.route("/kb/ask", methods=["POST"])
+def kb_ask():
+    if not KB_CFG:
+        return jsonify({"status": "error", "error": "knowledge base not enabled"}), 404
+    payload, code = kbclient.handle_ask(request.get_json(silent=True), KB_CFG, gpu_lock)
+    return jsonify(payload), code
+
+
 if __name__ == "__main__":
     server = WSGIServer((BIND, PORT), app, numthreads=4)
     server.ssl_adapter = BuiltinSSLAdapter(TLS_CERT, TLS_KEY)
     logger.info(f"Scrit Cribbler backend on https://{BIND}:{PORT} (faster-whisper={WHISPER_MODEL}/{WHISPER_COMPUTE}, "
-                f"ollama={OLLAMA_MODEL}, num_ctx={OLLAMA_NUM_CTX})")
+                f"ollama={OLLAMA_MODEL}, num_ctx={OLLAMA_NUM_CTX}, kb={'on' if KB_CFG else 'off'})")
     try:
         server.start()
     except KeyboardInterrupt:

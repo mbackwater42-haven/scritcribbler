@@ -18,6 +18,8 @@
  *
  * Usage:
  *   node tests/recap_eval.mjs --models mistral,qwen3:8b --runs 2 --out /tmp/recaps CASE_DIR
+ *   --extra FILE            text appended to the background (campaign-KB card experiment); not counted as grounding
+ *   --forbidden-extra FILE  more "label | regex" forbidden rules (e.g. GM-only names)
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -32,10 +34,13 @@ const opt = (name, dflt) => {
 };
 const models = opt("models", "mistral").split(",").map((m) => m.trim()).filter(Boolean);
 const runs = Number(opt("runs", "1"));
+// Optional KB experiment inputs (files live OUTSIDE the repo): text appended to the background, and extra forbidden rules.
+const extraFile = opt("extra", null);
+const extraForbidden = opt("forbidden-extra", null);
 const out = opt("out", null);
 const cases = args;
 if (!cases.length) {
-  console.error("usage: recap_eval.mjs --models a,b --runs N [--out DIR] CASE_DIR ...");
+  console.error("usage: recap_eval.mjs --models a,b --runs N [--out DIR] [--extra FILE] [--forbidden-extra FILE] CASE_DIR ...");
   process.exit(2);
 }
 
@@ -80,10 +85,11 @@ function loadCase(dir) {
     name: path.basename(dir),
     lines,
     chunks: chunks.filter(Boolean).map((c) => ({ index: c.index, start: c.start, transcript: c.lines.map((l) => `[${hms(l.t)}] ${l.speaker}: ${l.text}`).join("\n") })),
-    background: read(path.join(dir, "background.txt")).trim() || null,
+    background0: read(path.join(dir, "background.txt")).trim() || null,
+    background: [read(path.join(dir, "background.txt")).trim(), extraFile ? read(extraFile).trim() : ""].filter(Boolean).join("\n\n") || null,
     vocab: read(path.join(dir, "vocab.txt")).split("\n").map((v) => v.trim()).filter(Boolean),
     facts: rules(path.join(dir, "facts.txt")),
-    forbidden: rules(path.join(dir, "forbidden.txt"))
+    forbidden: [...rules(path.join(dir, "forbidden.txt")), ...(extraForbidden ? rules(extraForbidden) : [])]
   };
 }
 
@@ -107,7 +113,7 @@ async function recap(c, model) {
 }
 
 function score(c, r) {
-  const source = [...c.lines.map((l) => `${l.speaker} ${l.text}`), ...r.notes, c.background ?? ""].join("\n");
+  const source = [...c.lines.map((l) => `${l.speaker} ${l.text}`), ...r.notes, c.background0 ?? ""].join("\n");
   const grounding = groundByVocab(ungroundedTerms(r.text, source), source, c.vocab);
   return {
     facts: c.facts.filter((f) => f.re.test(r.text)).length,
