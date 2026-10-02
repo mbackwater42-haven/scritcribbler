@@ -18,8 +18,17 @@ export async function api(path, { method = "GET", body } = {}) {
     cache: "no-store"
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Recorder returned HTTP ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error(data.error || `Recorder returned HTTP ${res.status}`), { status: res.status });
   return data;
+}
+
+/**
+ * GM lore Q&A through the recorder's /kb/ask. The recorder checks that this browser is logged in to Foundry
+ * as the Gamemaster (the session cookie travels with the request) and that the recorder token is right.
+ * audience: "gm" (everything) or "players" (only what the players know).
+ */
+export async function askKb(question, audience = "gm") {
+  return api("/kb/ask", { method: "POST", body: { world: game.world.id, question, audience } });
 }
 
 /** LiveKit room the A/V client is using (avclient-livekit sets client.room). */

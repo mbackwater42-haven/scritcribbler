@@ -1,5 +1,6 @@
 import { MODULE_NAME, startRecapPoller, trackSceneVocab } from "./recorder-api.mjs";
 import { RecordingDialog } from "./recording-dialog.mjs";
+import { KbDialog } from "./kb-dialog.mjs";
 
 Hooks.once("init", () => {
   game.settings.register(MODULE_NAME, "recorder-url", {
@@ -70,6 +71,16 @@ Hooks.on("getSceneControlButtons", (controls) => {
       if (existing) existing.render({ force: true });
       else new RecordingDialog().render({ force: true });
     }
+  };
+
+  controls.tokens.tools["scrit-cribbler-kb"] = {
+    name: "scrit-cribbler-kb",
+    title: "Ask the campaign KB",
+    icon: "fas fa-book-open",
+    order: Object.keys(controls.tokens.tools).length,
+    button: true,
+    visible: true,
+    onChange: () => KbDialog.open()
   };
 });
 

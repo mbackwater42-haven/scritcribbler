@@ -1,0 +1,59 @@
+<section class="sc-kb">
+  {{#if tokenMissing}}
+    <p class="sc-warning"><i class="fas fa-key"></i> Set the <strong>Recorder token</strong> in Configure Settings → Scrit Cribbler first.</p>
+  {{/if}}
+
+  <label class="sc-field">
+    <span>Question</span>
+    <textarea name="kb-question" rows="3" maxlength="500" placeholder="e.g. What did we learn about the smugglers at the docks?" {{#if busy}}disabled{{/if}}>{{question}}</textarea>
+  </label>
+
+  <div class="sc-kb-row">
+    <label class="sc-field sc-kb-audience">
+      <span>View</span>
+      <select name="kb-audience" {{#if busy}}disabled{{/if}}>
+        <option value="gm" {{#if isGm}}selected{{/if}}>GM view (everything)</option>
+        <option value="players" {{#unless isGm}}selected{{/unless}}>Players view (only what the players know)</option>
+      </select>
+    </label>
+    <button type="button" class="sc-kb-ask" data-action="ask" {{#if (or busy tokenMissing)}}disabled{{/if}}>
+      <i class="fas fa-magnifying-glass"></i> Ask
+    </button>
+  </div>
+
+  {{#if busy}}
+    <p class="sc-hint sc-kb-wait"><i class="fas fa-spinner fa-spin"></i> Searching the notes… <span data-kb-elapsed>0 s</span>. The first answer after a quiet spell can take about a minute while the model loads.</p>
+  {{/if}}
+  {{#if error}}
+    <p class="sc-warning"><i class="fas fa-triangle-exclamation"></i> {{error}}</p>
+  {{/if}}
+
+  <p class="sc-hint">Answers appear only on your screen; nothing is posted to chat. Small models can be wrong, so check the sources.</p>
+
+  {{#if history.length}}
+    <div class="sc-recent-head">
+      <h3>This session</h3>
+      <button type="button" class="sc-clear-all" data-action="clear"><i class="fas fa-trash"></i> Clear</button>
+    </div>
+    <div class="sc-kb-history">
+      {{#each history}}
+        <article class="sc-card sc-kb-item">
+          <header class="sc-row"><strong>{{question}}</strong></header>
+          <div class="sc-kb-answer">{{{answerHtml}}}</div>
+          {{#if sources.length}}
+            <details class="sc-kb-sources">
+              <summary>Sources ({{sources.length}})</summary>
+              {{#each sources}}
+                <details class="sc-kb-source {{#if cited}}cited{{/if}}">
+                  <summary><span class="sc-cite">[{{n}}]</span> {{label}}{{#if cited}} <em>(cited)</em>{{/if}} <small>{{reliability}}</small></summary>
+                  <p>{{text}}</p>
+                </details>
+              {{/each}}
+            </details>
+          {{/if}}
+          <footer class="sc-sub">{{audienceLabel}} · {{meta}}</footer>
+        </article>
+      {{/each}}
+    </div>
+  {{/if}}
+</section>
